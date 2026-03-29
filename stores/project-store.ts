@@ -1,0 +1,1318 @@
+/**
+ * Project Store (Zustand)
+ * - persist 적용으로 새로고침 후에도 데이터 유지
+ * - hydration 상태 관리 포함
+ */
+
+import { useCallback } from 'react'
+import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import type {
+  CreateProjectInput,
+  Draft,
+  DraftSettings,
+  Project,
+  ResearchItem,
+  ImagePrompt,
+  GeneratedImage,
+  ThumbnailSettings,
+  // Restaurant domain types
+  PlaceCandidate,
+  NormalizedPlaceProfile,
+  UserReviewInput,
+  ReviewDigest,
+  RestaurantDraftSettings,
+  RestaurantDraftVersion,
+  RestaurantDraftGenerationMode,
+  RestaurantDraftVariationPreset,
+  // Informational domain types
+  SourceInput,
+  SourceDocument,
+  InformationalOutline,
+  KeyPoint,
+  TopicAnalysis,
+  InformationalDraftSettings,
+} from '@/types'
+import { createId, countWords, nowIso } from '@/lib/utils'
+import {
+  createMockDraftFromContext,
+  createMockResearchItems,
+} from '@/lib/mock-data'
+import { generateRestaurantDraft } from '@/lib/ai/restaurant-draft'
+
+interface ProjectStore {
+  hasHydrated: boolean
+
+  projects: Project[]
+  researchItems: Record<string, ResearchItem[]>
+  selectedResearchIds: Record<string, string[]>
+  draftSettings: Record<string, DraftSettings>
+  drafts: Record<string, Draft>
+  imagePrompts: Record<string, ImagePrompt[]>
+  thumbnailSettings: Record<string, ThumbnailSettings>
+
+  // ───────────────────────────────────────────────
+  // Restaurant Domain States (신규)
+  // ───────────────────────────────────────────────
+  /** 장소 검색 후보 */
+  restaurantPlaceCandidates: Record<string, PlaceCandidate[]>
+  /** 선택된 장소 프로필 */
+  restaurantSelectedPlace: Record<string, NormalizedPlaceProfile | undefined>
+  /** 사용자 입력 리뷰 */
+  restaurantReviewInputs: Record<string, UserReviewInput[]>
+  /** 리뷰 다이제스트 */
+  restaurantReviewDigest: Record<string, ReviewDigest | undefined>
+  /** 초안 버전 히스토리 */
+  restaurantDraftVersions: Record<string, RestaurantDraftVersion[]>
+  /** 현재 선택된 초안 버전 ID */
+  restaurantCurrentDraftVersionId: Record<string, string | undefined>
+
+  // ───────────────────────────────────────────────
+  // Informational Domain States (신규)
+  // ───────────────────────────────────────────────
+  /** 소스 입력 목록 */
+  informationalSources: Record<string, SourceInput[]>
+  /** 처리된 소스 문서 */
+  informationalSourceDocs: Record<string, SourceDocument[]>
+  /** 글 개요 */
+  informationalOutline: Record<string, InformationalOutline | undefined>
+  /** 토픽 분석 */
+  informationalTopicAnalysis: Record<string, TopicAnalysis | undefined>
+  /** 핵심 포인트 */
+  informationalKeyPoints: Record<string, KeyPoint[]>
+  /** 초안 작성 설정 */
+  informationalDraftSettings: Record<string, InformationalDraftSettings | undefined>
+
+  setHasHydrated: (value: boolean) => void
+
+  createProject: (data: CreateProjectInput) => Project
+  getProject: (id: string) => Project | undefined
+  updateProject: (id: string, updates: Partial<Project>) => void
+
+  setResearchItems: (projectId: string, items: ResearchItem[]) => void
+  toggleResearchSelection: (projectId: string, itemId: string) => void
+  getSelectedResearchItems: (projectId: string) => ResearchItem[]
+
+  saveDraftSettings: (projectId: string, settings: DraftSettings) => void
+  getDraftSettings: (projectId: string) => DraftSettings | undefined
+
+  createDraft: (projectId: string) => Draft | undefined
+  createRestaurantDraft: (projectId: string) => Promise<Draft | undefined>
+  getDraft: (projectId: string) => Draft | undefined
+  updateDraftContent: (projectId: string, content: string) => void
+
+  // Image Prompts
+  generateImagePrompts: (projectId: string, blocks: { id: string; content: string }[]) => void
+  /**
+   * 서버에서 생성된 ImagePrompt 결과를 저장 (AI 계층 연동)
+   * @see PROMPT_GUIDE.md Section 4
+   */
+  saveImagePromptsFromAI: (projectId: string, prompts: ImagePrompt[]) => void
+  getImagePrompts: (projectId: string) => ImagePrompt[]
+  updateImagePrompt: (projectId: string, promptId: string, updates: Partial<ImagePrompt>) => void
+  selectGeneratedImage: (projectId: string, promptId: string, imageId: string) => void
+
+  // Thumbnail
+  saveThumbnailSettings: (projectId: string, settings: ThumbnailSettings) => void
+  getThumbnailSettings: (projectId: string) => ThumbnailSettings | undefined
+
+  // ───────────────────────────────────────────────
+  // Restaurant Domain Actions (신규)
+  // ───────────────────────────────────────────────
+  setPlaceCandidates: (projectId: string, candidates: PlaceCandidate[]) => void
+  getPlaceCandidates: (projectId: string) => PlaceCandidate[]
+  selectPlace: (projectId: string, place: NormalizedPlaceProfile) => void
+  getSelectedPlace: (projectId: string) => NormalizedPlaceProfile | undefined
+  addReviewInput: (projectId: string, review: Omit<UserReviewInput, 'id' | 'createdAt'>) => void
+  getReviewInputs: (projectId: string) => UserReviewInput[]
+  setReviewDigest: (projectId: string, digest: ReviewDigest) => void
+  getReviewDigest: (projectId: string) => ReviewDigest | undefined
+
+  // ───────────────────────────────────────────────
+  // Draft Version Management (NEW)
+  // ───────────────────────────────────────────────
+  /** 초안 버전 추가 */
+  addDraftVersion: (projectId: string, version: Omit<RestaurantDraftVersion, 'id'>) => RestaurantDraftVersion
+  /** 초안 버전 목록 조회 */
+  getDraftVersions: (projectId: string) => RestaurantDraftVersion[]
+  /** 특정 버전 조회 */
+  getDraftVersionById: (projectId: string, versionId: string) => RestaurantDraftVersion | undefined
+  /** 현재 버전 ID 설정 */
+  setCurrentDraftVersionId: (projectId: string, versionId: string | undefined) => void
+  /** 현재 버전 ID 조회 */
+  getCurrentDraftVersionId: (projectId: string) => string | undefined
+  /** 현재 활성화된 버전 조회 */
+  getCurrentDraftVersion: (projectId: string) => RestaurantDraftVersion | undefined
+  /** 버전 라벨 업데이트 */
+  updateDraftVersionLabel: (projectId: string, versionId: string, label: string) => void
+  /** 버전 삭제 */
+  removeDraftVersion: (projectId: string, versionId: string) => void
+  /** 버전 선택 시 Draft 업데이트 */
+  switchDraftVersion: (projectId: string, versionId: string) => void
+  /** 현재 Draft 재생성 (같은 설정으로 새 표현) */
+  regenerateRestaurantDraft: (
+    projectId: string, 
+    settings: RestaurantDraftSettings
+  ) => Promise<RestaurantDraftVersion | null>
+  /** 현재 Draft 변형 생성 (프리셋 적용) */
+  createRestaurantDraftVariation: (
+    projectId: string,
+    settings: RestaurantDraftSettings, 
+    preset: RestaurantDraftVariationPreset
+  ) => Promise<RestaurantDraftVersion | null>
+  
+  // ───────────────────────────────────────────────
+  // Informational Domain Actions (신규)
+  // ───────────────────────────────────────────────
+  createInformationalDraft: (projectId: string) => Promise<Draft | undefined>
+  addSource: (projectId: string, source: Omit<SourceInput, 'id' | 'addedAt'>) => void
+  getSources: (projectId: string) => SourceInput[]
+  removeSource: (projectId: string, sourceId: string) => void
+  setSourceDocument: (projectId: string, doc: SourceDocument) => void
+  getSourceDocuments: (projectId: string) => SourceDocument[]
+  setOutline: (projectId: string, outline: InformationalOutline) => void
+  getOutline: (projectId: string) => InformationalOutline | undefined
+  setTopicAnalysis: (projectId: string, analysis: TopicAnalysis) => void
+  getTopicAnalysis: (projectId: string) => TopicAnalysis | undefined
+  setKeyPoints: (projectId: string, keyPoints: KeyPoint[]) => void
+  getKeyPoints: (projectId: string) => KeyPoint[]
+  removeReviewInput: (projectId: string, reviewId: string) => void
+  /** 정보성 글 초안 설정 저장 */
+  saveInformationalDraftSettings: (projectId: string, settings: InformationalDraftSettings) => void
+  /** 정보성 글 초안 설정 조회 */
+  getInformationalDraftSettings: (projectId: string) => InformationalDraftSettings | undefined
+
+  resetAll: () => void
+}
+
+export const useProjectStore = create<ProjectStore>()(
+  persist(
+    (set, get) => ({
+      hasHydrated: false,
+
+      projects: [],
+      researchItems: {},
+      selectedResearchIds: {},
+      draftSettings: {},
+      drafts: {},
+      imagePrompts: {},
+      thumbnailSettings: {},
+
+      // Restaurant Domain States 초기화 (신규)
+      restaurantPlaceCandidates: {},
+      restaurantSelectedPlace: {},
+      restaurantReviewInputs: {},
+      restaurantReviewDigest: {},
+      restaurantDraftVersions: {},
+      restaurantCurrentDraftVersionId: {},
+
+      // Informational Domain States 초기화 (신규)
+      informationalSources: {},
+      informationalSourceDocs: {},
+      informationalOutline: {},
+      informationalTopicAnalysis: {},
+      informationalKeyPoints: {},
+      informationalDraftSettings: {},
+
+      setHasHydrated: (value) => set({ hasHydrated: value }),
+
+      createProject: (data) => {
+        const project: Project = {
+          id: createId('project'),
+          type: data.type,
+          title: data.title.trim(),
+          topic: data.topic.trim(),
+          targetAudience: data.targetAudience.trim(),
+          tone: data.tone,
+          keywords: data.keywords,
+          status: 'researching',
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        }
+
+        const research = createMockResearchItems(project)
+
+        set((state) => ({
+          projects: [project, ...state.projects],
+          researchItems: {
+            ...state.researchItems,
+            [project.id]: research,
+          },
+          selectedResearchIds: {
+            ...state.selectedResearchIds,
+            [project.id]: research.slice(0, 2).map((item) => item.id),
+          },
+        }))
+
+        return project
+      },
+
+      getProject: (id) => {
+        return get().projects.find((project) => project.id === id)
+      },
+
+      updateProject: (id, updates) => {
+        set((state) => ({
+          projects: state.projects.map((project) =>
+            project.id === id
+              ? { ...project, ...updates, updatedAt: nowIso() }
+              : project
+          ),
+        }))
+      },
+
+      setResearchItems: (projectId, items) => {
+        set((state) => ({
+          researchItems: {
+            ...state.researchItems,
+            [projectId]: items,
+          },
+        }))
+      },
+
+      toggleResearchSelection: (projectId, itemId) => {
+        const current = get().selectedResearchIds[projectId] ?? []
+        const exists = current.includes(itemId)
+
+        const next = exists
+          ? current.filter((id) => id !== itemId)
+          : [...current, itemId]
+
+        set((state) => ({
+          selectedResearchIds: {
+            ...state.selectedResearchIds,
+            [projectId]: next,
+          },
+        }))
+      },
+
+      getSelectedResearchItems: (projectId) => {
+        const items = get().researchItems[projectId] ?? []
+        const selectedIds = get().selectedResearchIds[projectId] ?? []
+
+        return items.filter((item) => selectedIds.includes(item.id))
+      },
+
+      saveDraftSettings: (projectId, settings) => {
+        set((state) => ({
+          draftSettings: {
+            ...state.draftSettings,
+            [projectId]: settings,
+          },
+          projects: state.projects.map((project) =>
+            project.id === projectId
+              ? {
+                  ...project,
+                  status: 'writing',
+                  updatedAt: nowIso(),
+                }
+              : project,
+          ),
+        }))
+      },
+
+      getDraftSettings: (projectId) => {
+        return get().draftSettings[projectId]
+      },
+
+      createDraft: (projectId) => {
+        const existing = get().drafts[projectId]
+        if (existing) return existing
+
+        const project = get().getProject(projectId)
+        const settings = get().getDraftSettings(projectId)
+        const selectedResearch = get().getSelectedResearchItems(projectId)
+
+        if (!project || !settings) return undefined
+
+        // Restaurant 타입은 별도 처리
+        if (project.type === 'restaurant') {
+          return undefined // createRestaurantDraft 사용하도록 유도
+        }
+
+        const content = createMockDraftFromContext({
+          project,
+          settings,
+          selectedResearch,
+        })
+
+        const draft: Draft = {
+          projectId,
+          title: project.title,
+          content,
+          version: 1,
+          wordCount: countWords(content),
+          updatedAt: nowIso(),
+          lastSavedAt: nowIso(),
+        }
+
+        set((state) => ({
+          drafts: {
+            ...state.drafts,
+            [projectId]: draft,
+          },
+        }))
+
+        return draft
+      },
+
+      /**
+       * Restaurant 타입 전용 초안 생성
+       * ReviewDigest와 PlaceProfile을 활용한 구조화된 초안 생성
+       * 
+       * TODO: 실제 AI provider 연동 (lib/ai/client.ts)
+       */
+      createRestaurantDraft: async (projectId) => {
+        const existing = get().drafts[projectId]
+        if (existing) return existing
+
+        const project = get().getProject(projectId)
+        const settings = get().getDraftSettings(projectId)
+        const placeProfile = get().getSelectedPlace(projectId)
+        const reviewDigest = get().getReviewDigest(projectId)
+
+        if (!project || !settings) return undefined
+        if (project.type !== 'restaurant') return undefined
+
+        // ReviewDigest가 없으면 기본 Draft 생성
+        if (!reviewDigest || !placeProfile) {
+          console.warn('[createRestaurantDraft] ReviewDigest or PlaceProfile missing, using fallback')
+          const fallbackContent = `# ${project.title}
+
+${project.topic}에 대해 작성하는 글입니다.
+
+아직 리서치 단계에서 생성된 요약이 없습니다.
+리서치 탭으로 돌아가서 매장 검색, 리뷰 입력, 요약 생성을 완료해주세요.
+
+---
+
+**프로젝트 정보**
+- 주제: ${project.topic}
+- 타겟: ${project.targetAudience}
+- 톤: ${project.tone}
+`
+          const fallbackDraft: Draft = {
+            projectId,
+            title: project.title,
+            content: fallbackContent,
+            version: 1,
+            wordCount: countWords(fallbackContent),
+            updatedAt: nowIso(),
+            lastSavedAt: nowIso(),
+          }
+
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: fallbackDraft,
+            },
+          }))
+
+          return fallbackDraft
+        }
+
+        // RestaurantDraftSettings 변환
+        const restaurantSettings: import('@/types').RestaurantDraftSettings = {
+          channel: 'blog',
+          tone: 'friendly',
+          focusPoints: ['menu', 'atmosphere'],
+        }
+
+        // customPrompt에서 설정 추출 시도
+        if (settings.customPrompt) {
+          if (settings.customPrompt.includes('blog')) restaurantSettings.channel = 'blog'
+          if (settings.customPrompt.includes('threads')) restaurantSettings.channel = 'threads'
+          if (settings.customPrompt.includes('daangn')) restaurantSettings.channel = 'daangn'
+          if (settings.customPrompt.includes('friendly')) restaurantSettings.tone = 'friendly'
+          if (settings.customPrompt.includes('informative')) restaurantSettings.tone = 'informative'
+          if (settings.customPrompt.includes('recommendation')) restaurantSettings.tone = 'recommendation'
+        }
+
+        // goal에서 focusPoints 추출 시도
+        if (settings.goal) {
+          const possiblePoints = ['menu', 'atmosphere', 'location', 'price', 'waiting', 'parking'] as const
+          restaurantSettings.focusPoints = possiblePoints.filter(p => 
+            settings.goal?.toLowerCase().includes(p)
+          )
+          if (restaurantSettings.focusPoints.length === 0) {
+            restaurantSettings.focusPoints = ['menu', 'atmosphere']
+          }
+        }
+
+        try {
+          // AI 초안 생성
+          const output = await generateRestaurantDraft({
+            placeProfile,
+            reviewDigest,
+            settings: restaurantSettings,
+            projectTitle: project.title,
+            projectTopic: project.topic,
+          })
+
+          const draft: Draft = {
+            projectId,
+            title: output.title,
+            content: output.content,
+            version: 1,
+            wordCount: countWords(output.content),
+            updatedAt: nowIso(),
+            lastSavedAt: nowIso(),
+          }
+
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: draft,
+            },
+          }))
+
+          return draft
+        } catch (error) {
+          console.error('[createRestaurantDraft] Failed:', error)
+          return undefined
+        }
+      },
+
+      getDraft: (projectId) => {
+        return get().drafts[projectId]
+      },
+
+      updateDraftContent: (projectId, content) => {
+        const draft = get().drafts[projectId]
+        if (!draft) return
+
+        set((state) => ({
+          drafts: {
+            ...state.drafts,
+            [projectId]: {
+              ...draft,
+              content,
+              wordCount: countWords(content),
+              updatedAt: nowIso(),
+              lastSavedAt: nowIso(),
+            },
+          },
+        }))
+      },
+
+      // Image Prompts
+      generateImagePrompts: (projectId, blocks) => {
+        // TODO: PROMPT_GUIDE.md 섹션 4 (Image Prompt 생성) 연동
+        // 현재는 block.content 기반으로 간단한 prompt 생성 (placeholder)
+        // 실제 연동 시:
+        // const response = await fetch('/api/image-prompt', {
+        //   method: 'POST',
+        //   body: JSON.stringify({ blocks, projectSettings })
+        // })
+
+        const prompts: ImagePrompt[] = blocks.map((block) => ({
+          id: createId('prompt'),
+          projectId,
+          blockId: block.id,
+          prompt: `${block.content.slice(0, 100)}...를 시각화하는 이미지`,
+          style: 'illustration',
+          ratio: '16:9',
+          status: 'pending',
+          generatedImages: [],
+          createdAt: nowIso(),
+        }))
+
+        set((state) => ({
+          imagePrompts: {
+            ...state.imagePrompts,
+            [projectId]: prompts,
+          },
+        }))
+      },
+
+      saveImagePromptsFromAI: (projectId, prompts) => {
+        set((state) => ({
+          imagePrompts: {
+            ...state.imagePrompts,
+            [projectId]: prompts,
+          },
+        }))
+      },
+
+      getImagePrompts: (projectId) => {
+        return get().imagePrompts[projectId] ?? []
+      },
+
+      updateImagePrompt: (projectId, promptId, updates) => {
+        const prompts = get().imagePrompts[projectId]
+        if (!prompts) return
+
+        set((state) => ({
+          imagePrompts: {
+            ...state.imagePrompts,
+            [projectId]: prompts.map((p) =>
+              p.id === promptId ? { ...p, ...updates } : p
+            ),
+          },
+        }))
+      },
+
+      selectGeneratedImage: (projectId, promptId, imageId) => {
+        const prompts = get().imagePrompts[projectId]
+        if (!prompts) return
+
+        set((state) => ({
+          imagePrompts: {
+            ...state.imagePrompts,
+            [projectId]: prompts.map((p) =>
+              p.id === promptId ? { ...p, selectedImageId: imageId } : p
+            ),
+          },
+        }))
+      },
+
+      // Thumbnail
+      saveThumbnailSettings: (projectId, settings) => {
+        set((state) => ({
+          thumbnailSettings: {
+            ...state.thumbnailSettings,
+            [projectId]: settings,
+          },
+        }))
+      },
+
+      getThumbnailSettings: (projectId) => {
+        return get().thumbnailSettings[projectId]
+      },
+
+      // ───────────────────────────────────────────────
+      // Restaurant Domain Actions 구현 (신규)
+      // ───────────────────────────────────────────────
+      setPlaceCandidates: (projectId, candidates) => {
+        set((state) => ({
+          restaurantPlaceCandidates: {
+            ...state.restaurantPlaceCandidates,
+            [projectId]: candidates,
+          },
+        }))
+      },
+      getPlaceCandidates: (projectId) => {
+        return get().restaurantPlaceCandidates[projectId] ?? []
+      },
+      selectPlace: (projectId, place) => {
+        set((state) => ({
+          restaurantSelectedPlace: {
+            ...state.restaurantSelectedPlace,
+            [projectId]: place,
+          },
+        }))
+      },
+      getSelectedPlace: (projectId) => {
+        return get().restaurantSelectedPlace[projectId]
+      },
+      addReviewInput: (projectId, review) => {
+        const newReview: UserReviewInput = {
+          ...review,
+          id: createId('review'),
+          createdAt: nowIso(),
+        }
+        set((state) => ({
+          restaurantReviewInputs: {
+            ...state.restaurantReviewInputs,
+            [projectId]: [...(state.restaurantReviewInputs[projectId] ?? []), newReview],
+          },
+        }))
+      },
+      getReviewInputs: (projectId) => {
+        return get().restaurantReviewInputs[projectId] ?? []
+      },
+      removeReviewInput: (projectId, reviewId) => {
+        set((state) => ({
+          restaurantReviewInputs: {
+            ...state.restaurantReviewInputs,
+            [projectId]: (state.restaurantReviewInputs[projectId] ?? []).filter(
+              (r) => r.id !== reviewId
+            ),
+          },
+        }))
+      },
+      setReviewDigest: (projectId, digest) => {
+        set((state) => ({
+          restaurantReviewDigest: {
+            ...state.restaurantReviewDigest,
+            [projectId]: digest,
+          },
+        }))
+      },
+      getReviewDigest: (projectId) => {
+        return get().restaurantReviewDigest[projectId]
+      },
+
+      // ───────────────────────────────────────────────
+      // Draft Version Management 구현 (NEW)
+      // ───────────────────────────────────────────────
+      addDraftVersion: (projectId, version) => {
+        const newVersion: RestaurantDraftVersion = {
+          ...version,
+          id: createId('version'),
+        }
+        set((state) => ({
+          restaurantDraftVersions: {
+            ...state.restaurantDraftVersions,
+            [projectId]: [...(state.restaurantDraftVersions[projectId] ?? []), newVersion],
+          },
+          // 새 버전을 현재 버전으로 자동 설정
+          restaurantCurrentDraftVersionId: {
+            ...state.restaurantCurrentDraftVersionId,
+            [projectId]: newVersion.id,
+          },
+        }))
+        return newVersion
+      },
+
+      getDraftVersions: (projectId) => {
+        return get().restaurantDraftVersions[projectId] ?? []
+      },
+
+      getDraftVersionById: (projectId, versionId) => {
+        const versions = get().restaurantDraftVersions[projectId] ?? []
+        return versions.find((v) => v.id === versionId)
+      },
+
+      setCurrentDraftVersionId: (projectId, versionId) => {
+        set((state) => ({
+          restaurantCurrentDraftVersionId: {
+            ...state.restaurantCurrentDraftVersionId,
+            [projectId]: versionId,
+          },
+        }))
+      },
+
+      getCurrentDraftVersionId: (projectId) => {
+        return get().restaurantCurrentDraftVersionId[projectId]
+      },
+
+      getCurrentDraftVersion: (projectId) => {
+        const versionId = get().restaurantCurrentDraftVersionId[projectId]
+        if (!versionId) return undefined
+        const versions = get().restaurantDraftVersions[projectId] ?? []
+        return versions.find((v) => v.id === versionId)
+      },
+
+      updateDraftVersionLabel: (projectId, versionId, label) => {
+        set((state) => ({
+          restaurantDraftVersions: {
+            ...state.restaurantDraftVersions,
+            [projectId]: (state.restaurantDraftVersions[projectId] ?? []).map((v) =>
+              v.id === versionId ? { ...v, label } : v
+            ),
+          },
+        }))
+      },
+
+      removeDraftVersion: (projectId, versionId) => {
+        set((state) => {
+          const versions = state.restaurantDraftVersions[projectId] ?? []
+          const filtered = versions.filter((v) => v.id !== versionId)
+          
+          // 삭제한 버전이 현재 선택된 버전이면, 남은 버전 중 마지막으로 선택
+          const currentId = state.restaurantCurrentDraftVersionId[projectId]
+          const newCurrentId = currentId === versionId 
+            ? (filtered.length > 0 ? filtered[filtered.length - 1].id : undefined)
+            : currentId
+          
+          return {
+            restaurantDraftVersions: {
+              ...state.restaurantDraftVersions,
+              [projectId]: filtered,
+            },
+            restaurantCurrentDraftVersionId: {
+              ...state.restaurantCurrentDraftVersionId,
+              [projectId]: newCurrentId,
+            },
+          }
+        })
+      },
+
+      // ───────────────────────────────────────────────
+      // Draft Regenerate & Variation Actions (신규)
+      // ───────────────────────────────────────────────
+      switchDraftVersion: (projectId, versionId) => {
+        const version = get().getDraftVersionById(projectId, versionId)
+        if (!version) {
+          console.warn('[switchDraftVersion] Version not found:', versionId)
+          return
+        }
+        
+        // 현재 버전 ID 업데이트
+        set((state) => ({
+          restaurantCurrentDraftVersionId: {
+            ...state.restaurantCurrentDraftVersionId,
+            [projectId]: versionId,
+          },
+          // Draft도 해당 버전 내용으로 업데이트
+          drafts: {
+            ...state.drafts,
+            [projectId]: {
+              projectId,
+              title: version.title,
+              content: version.content,
+              version: state.drafts[projectId]?.version ?? 1,
+              wordCount: version.wordCount,
+              updatedAt: nowIso(),
+            },
+          },
+        }))
+      },
+
+      regenerateRestaurantDraft: async (projectId, settings) => {
+        const state = get()
+        
+        // 현재 Digest가 없으면 재생성 불가
+        const digest = state.restaurantReviewDigest[projectId]
+        if (!digest) {
+          console.warn('[regenerateRestaurantDraft] No review digest found')
+          return null
+        }
+
+        const place = state.restaurantSelectedPlace[projectId]
+        
+        // Project 정보 조회
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) {
+          console.warn('[regenerateRestaurantDraft] Project not found')
+          return null
+        }
+        
+        try {
+          // Dynamically import to avoid SSR issues
+          const { generateRestaurantDraft } = await import('@/lib/ai/restaurant-draft')
+          
+          const input = {
+            placeProfile: place!,
+            reviewDigest: digest,
+            settings,
+            projectTitle: project.title,
+            projectTopic: project.topic,
+          }
+
+          const result = await generateRestaurantDraft({
+            ...input,
+            mode: 'regenerate',
+          })
+
+          if (!result || (!result.title && !result.content)) {
+            console.warn('[regenerateRestaurantDraft] Empty result from AI')
+            return null
+          }
+
+          // 현재 Draft를 Version으로 저장
+          const currentDraft = state.drafts[projectId]
+          if (currentDraft) {
+            const parentVersion: Omit<RestaurantDraftVersion, 'id'> = {
+              projectId,
+              mode: 'initial',
+              channel: settings.channel,
+              tone: settings.tone ?? 'friendly',
+              title: currentDraft.title,
+              content: currentDraft.content,
+              summary: '',
+              hashtags: [],
+              generatedAt: nowIso(),
+              wordCount: currentDraft.wordCount ?? currentDraft.content?.split(/\s+/).length ?? 0,
+              usedFallback: (result as { usedFallback?: boolean }).usedFallback ?? false,
+              source: (result as { usedFallback?: boolean }).usedFallback ? 'deterministic' : 'ai',
+              label: '이전 버전',
+              focusPoints: settings.focusPoints ?? [],
+            }
+            get().addDraftVersion(projectId, parentVersion)
+          }
+
+          // 새 결과를 Version으로 추가
+          const newVersionData: Omit<RestaurantDraftVersion, 'id'> = {
+            projectId,
+            mode: 'regenerate',
+            channel: settings.channel,
+            tone: settings.tone ?? 'friendly',
+            title: result.title,
+            content: result.content,
+            summary: result.summary ?? '',
+            hashtags: result.hashtags ?? [],
+            generatedAt: nowIso(),
+            wordCount: result.metadata?.wordCount ?? result.content?.split(/\s+/).length ?? 0,
+            source: result.usedFallback ? 'deterministic' : 'ai',
+            usedFallback: result.usedFallback ?? false,
+            label: '재생성',
+            focusPoints: settings.focusPoints ?? [],
+          }
+          
+          const newVersion = get().addDraftVersion(projectId, newVersionData)
+          
+          // Draft 업데이트
+          const wordCount = result.metadata?.wordCount ?? result.content?.split(/\s+/).length ?? 0
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: {
+                projectId,
+                title: result.title,
+                content: result.content,
+                version: (state.drafts[projectId]?.version ?? 0) + 1,
+                wordCount,
+                updatedAt: nowIso(),
+              },
+            },
+          }))
+
+          return newVersion
+        } catch (error) {
+          console.error('[regenerateRestaurantDraft] Error:', error)
+          return null
+        }
+      },
+
+      createRestaurantDraftVariation: async (projectId, settings, preset) => {
+        const state = get()
+        
+        // 현재 Digest가 없으면 변형 불가
+        const digest = state.restaurantReviewDigest[projectId]
+        if (!digest) {
+          console.warn('[createRestaurantDraftVariation] No review digest found')
+          return null
+        }
+
+        const place = state.restaurantSelectedPlace[projectId]
+        
+        // Project 정보 조회
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) {
+          console.warn('[createRestaurantDraftVariation] Project not found')
+          return null
+        }
+        
+        try {
+          // Dynamically import to avoid SSR issues
+          const { generateRestaurantDraft } = await import('@/lib/ai/restaurant-draft')
+          
+          const input = {
+            placeProfile: place!,
+            reviewDigest: digest,
+            settings,
+            projectTitle: project.title,
+            projectTopic: project.topic,
+          }
+
+          const result = await generateRestaurantDraft({
+            ...input,
+            mode: 'variation',
+            preset,
+          })
+
+          if (!result || (!result.title && !result.content)) {
+            console.warn('[createRestaurantDraftVariation] Empty result from AI')
+            return null
+          }
+
+          // 현재 Draft를 Version으로 저장
+          const currentDraft = state.drafts[projectId]
+          if (currentDraft) {
+            const parentVersion: Omit<RestaurantDraftVersion, 'id'> = {
+              projectId,
+              mode: 'initial',
+              channel: settings.channel,
+              tone: settings.tone ?? 'friendly',
+              title: currentDraft.title,
+              content: currentDraft.content,
+              summary: '',
+              hashtags: [],
+              generatedAt: nowIso(),
+              wordCount: currentDraft.wordCount ?? currentDraft.content?.split(/\s+/).length ?? 0,
+              usedFallback: false,
+              source: 'ai',
+              label: '이전 버전',
+              focusPoints: settings.focusPoints ?? [],
+            }
+            get().addDraftVersion(projectId, parentVersion)
+          }
+
+          // 프리셋별 라벨
+          const presetLabels: Record<RestaurantDraftVariationPreset, string> = {
+            same_but_fresher: '새로운 표현',
+            shorter: '짧은 버전',
+            more_informative: '정보 중심',
+            more_friendly: '친근한 톤',
+            menu_focus: '메뉴 중심',
+            atmosphere_focus: '분위기 중심',
+            location_price_focus: '위치/가격 중심',
+            daangn_local: '당근마켓 스타일',
+            threads_punchy: '스레드 스타일',
+          }
+
+          // 새 결과를 Version으로 추가
+          const newVersionData: Omit<RestaurantDraftVersion, 'id'> = {
+            projectId,
+            mode: 'variation',
+            preset,
+            channel: settings.channel,
+            tone: settings.tone ?? 'friendly',
+            title: result.title,
+            content: result.content,
+            summary: result.summary ?? '',
+            hashtags: result.hashtags ?? [],
+            generatedAt: nowIso(),
+            wordCount: result.metadata?.wordCount ?? result.content?.split(/\s+/).length ?? 0,
+            source: result.usedFallback ? 'deterministic' : 'ai',
+            usedFallback: result.usedFallback ?? false,
+            label: presetLabels[preset] ?? '변형',
+            focusPoints: settings.focusPoints ?? [],
+          }
+          
+          const newVersion = get().addDraftVersion(projectId, newVersionData)
+          
+          // Draft 업데이트
+          const variationWordCount = result.metadata?.wordCount ?? result.content?.split(/\s+/).length ?? 0
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: {
+                projectId,
+                title: result.title,
+                content: result.content,
+                version: (state.drafts[projectId]?.version ?? 0) + 1,
+                wordCount: variationWordCount,
+                updatedAt: nowIso(),
+              },
+            },
+          }))
+
+          return newVersion
+        } catch (error) {
+          console.error('[createRestaurantDraftVariation] Error:', error)
+          return null
+        }
+      },
+
+      // ───────────────────────────────────────────────
+      // Informational Domain Actions 구현 (신규)
+      // ───────────────────────────────────────────────
+      
+      // Informational Draft 생성
+      createInformationalDraft: async (projectId) => {
+        const existing = get().drafts[projectId]
+        if (existing) return existing
+
+        const project = get().getProject(projectId)
+        const settings = get().getDraftSettings(projectId)
+        const infoSettings = get().getInformationalDraftSettings(projectId)
+        const outline = get().informationalOutline[projectId]
+        const sources = get().informationalSourceDocs[projectId]
+        const meta = project?.informationalMeta
+
+        if (!project || !settings) return undefined
+        if (project.type !== 'informational') return undefined
+        
+        // InformationalDraftSettings가 없으면 기본값 사용
+        const draftSettings: InformationalDraftSettings = infoSettings ?? {
+          channel: 'blog',
+          style: 'guide',
+          includeFaq: true,
+          includeChecklist: false,
+          keywordHighlight: 'bold',
+          promptMode: 'auto',
+        }
+
+        // outline이나 source가 없어도 fallback으로 진행
+        if (!outline || !sources || sources.length === 0 || !meta) {
+          console.warn('[createInformationalDraft] Missing research data, using fallback')
+          const fallbackContent = `# ${project.title}
+
+${project.topic}에 대해 작성하는 글입니다.
+
+아직 리서치 단계에서 충분한 데이터가 수집되지 않았습니다.
+리서치 탭으로 돌아가서 소스 입력, 핵심 포인트 정리, 아웃라인 생성을 완료해주세요.
+
+----
+
+**프로젝트 정보**
+- 주제: ${project.topic}
+- 타겟: ${project.targetAudience}
+- 톤: ${project.tone}
+
+**다음 단계:**
+1. 소스 문서 추가하기
+2. 핵심 포인트 정리하기
+3. 아웃라인 생성하기
+4. 초안 생성하기`
+
+          const fallbackDraft: Draft = {
+            projectId,
+            title: project.title,
+            content: fallbackContent,
+            version: 1,
+            wordCount: fallbackContent.length,
+            updatedAt: nowIso(),
+          }
+
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: fallbackDraft,
+            },
+          }))
+
+          return fallbackDraft
+        }
+
+        // AI 생성 시도
+        try {
+          const { generateInformationalDraft } = await import('@/lib/ai/informational-draft')
+
+          const result = await generateInformationalDraft({
+            meta,
+            outline,
+            sources,
+            settings: draftSettings,
+            projectTitle: project.title,
+            projectTopic: project.topic,
+            customPrompt: draftSettings.customPrompt,
+            promptMode: draftSettings.promptMode,
+            presetId: draftSettings.presetId,
+          })
+
+          const draft: Draft = {
+            projectId,
+            title: result.title,
+            content: result.content,
+            version: 1,
+            wordCount: result.metadata?.wordCount ?? result.content.length,
+            updatedAt: nowIso(),
+            usedSourceIds: result.usedSourceIds,
+          }
+
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: draft,
+            },
+          }))
+
+          return draft
+        } catch (error) {
+          console.error('[createInformationalDraft] Failed:', error)
+          return undefined
+        }
+      },
+
+      saveInformationalDraftSettings: (projectId, settings) => {
+        set((state) => ({
+          informationalDraftSettings: {
+            ...state.informationalDraftSettings,
+            [projectId]: settings,
+          },
+        }))
+      },
+      getInformationalDraftSettings: (projectId) => {
+        return get().informationalDraftSettings[projectId]
+      },
+
+      addSource: (projectId, source) => {
+        const newSource: SourceInput = {
+          ...source,
+          id: createId('source'),
+          addedAt: nowIso(),
+        }
+        set((state) => ({
+          informationalSources: {
+            ...state.informationalSources,
+            [projectId]: [...(state.informationalSources[projectId] ?? []), newSource],
+          },
+        }))
+      },
+      getSources: (projectId) => {
+        return get().informationalSources[projectId] ?? []
+      },
+      removeSource: (projectId, sourceId) => {
+        set((state) => ({
+          informationalSources: {
+            ...state.informationalSources,
+            [projectId]: (state.informationalSources[projectId] ?? []).filter(
+              (s) => s.id !== sourceId
+            ),
+          },
+        }))
+      },
+      setSourceDocument: (projectId, doc) => {
+        set((state) => ({
+          informationalSourceDocs: {
+            ...state.informationalSourceDocs,
+            [projectId]: [...(state.informationalSourceDocs[projectId] ?? []), doc],
+          },
+        }))
+      },
+      getSourceDocuments: (projectId) => {
+        return get().informationalSourceDocs[projectId] ?? []
+      },
+      setOutline: (projectId, outline) => {
+        set((state) => ({
+          informationalOutline: {
+            ...state.informationalOutline,
+            [projectId]: outline,
+          },
+        }))
+      },
+      getOutline: (projectId) => {
+        return get().informationalOutline[projectId]
+      },
+      setTopicAnalysis: (projectId, analysis) => {
+        set((state) => ({
+          informationalTopicAnalysis: {
+            ...state.informationalTopicAnalysis,
+            [projectId]: analysis,
+          },
+        }))
+      },
+      getTopicAnalysis: (projectId) => {
+        return get().informationalTopicAnalysis[projectId]
+      },
+      setKeyPoints: (projectId, keyPoints) => {
+        set((state) => ({
+          informationalKeyPoints: {
+            ...state.informationalKeyPoints,
+            [projectId]: keyPoints,
+          },
+        }))
+      },
+      getKeyPoints: (projectId) => {
+        return get().informationalKeyPoints[projectId] ?? []
+      },
+
+      resetAll: () =>
+        set({
+          projects: [],
+          researchItems: {},
+          selectedResearchIds: {},
+          draftSettings: {},
+          drafts: {},
+          imagePrompts: {},
+          thumbnailSettings: {},
+          // Domain states reset (신규)
+          restaurantPlaceCandidates: {},
+          restaurantSelectedPlace: {},
+          restaurantReviewInputs: {},
+          restaurantReviewDigest: {},
+          restaurantDraftVersions: {},
+          restaurantCurrentDraftVersionId: {},
+          informationalSources: {},
+          informationalSourceDocs: {},
+          informationalOutline: {},
+          informationalTopicAnalysis: {},
+          informationalKeyPoints: {},
+          informationalDraftSettings: {},
+        }),
+    }),
+    {
+      name: 'blog-mvp-project-store',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        projects: state.projects,
+        researchItems: state.researchItems,
+        selectedResearchIds: state.selectedResearchIds,
+        draftSettings: state.draftSettings,
+        drafts: state.drafts,
+        imagePrompts: state.imagePrompts,
+        thumbnailSettings: state.thumbnailSettings,
+        // Domain states persist (신규)
+        restaurantPlaceCandidates: state.restaurantPlaceCandidates,
+        restaurantSelectedPlace: state.restaurantSelectedPlace,
+        restaurantReviewInputs: state.restaurantReviewInputs,
+        restaurantReviewDigest: state.restaurantReviewDigest,
+        restaurantDraftVersions: state.restaurantDraftVersions,
+        restaurantCurrentDraftVersionId: state.restaurantCurrentDraftVersionId,
+        informationalSources: state.informationalSources,
+        informationalSourceDocs: state.informationalSourceDocs,
+        informationalOutline: state.informationalOutline,
+        informationalDraftSettings: state.informationalDraftSettings,
+      }),
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (!error) {
+            state?.setHasHydrated(true)
+          }
+        }
+      },
+    },
+  ),
+)
+
+// ============================================
+// Draft Version Management Hook
+// ============================================
+
+/**
+ * Restaurant Draft Version 관리를 위한 커스텀 훅
+ * 
+ * 사용 예시:
+ * ```tsx
+ * const {
+ *   versions,
+ *   currentVersion,
+ *   addVersion,
+ *   switchVersion,
+ *   regenerateDraft,
+ *   createVariation,
+ * } = useRestaurantDraftVersions(projectId)
+ * ```
+ */
+export function useRestaurantDraftVersions(projectId: string | null) {
+  const store = useProjectStore()
+  
+  const versions = projectId 
+    ? store.getDraftVersions(projectId) 
+    : []
+  
+  const currentVersion = projectId
+    ? store.getCurrentDraftVersion(projectId)
+    : undefined
+  
+  const activeDraft = projectId
+    ? store.drafts[projectId]
+    : undefined
+
+  const addVersion = useCallback((
+    version: Omit<RestaurantDraftVersion, 'id'>
+  ) => {
+    if (!projectId) return undefined
+    return store.addDraftVersion(projectId, version)
+  }, [projectId, store])
+
+  const switchVersion = useCallback((versionId: string) => {
+    if (!projectId) return
+    store.setCurrentDraftVersionId(projectId, versionId)
+  }, [projectId, store])
+
+  const regenerateDraft = useCallback(async (
+    settings: RestaurantDraftSettings
+  ) => {
+    if (!projectId) return null
+    // Implementation will be added in actions
+    return store.regenerateRestaurantDraft(projectId, settings)
+  }, [projectId, store])
+
+  const createVariation = useCallback(async (
+    settings: RestaurantDraftSettings,
+    preset: RestaurantDraftVariationPreset
+  ) => {
+    if (!projectId) return null
+    // Implementation will be added in actions  
+    return store.createRestaurantDraftVariation(projectId, settings, preset)
+  }, [projectId, store])
+
+  return {
+    // State
+    versions,
+    currentVersion,
+    activeDraft,
+    hasVersions: versions.length > 0,
+    
+    // Actions
+    addVersion,
+    switchVersion,
+    regenerateDraft,
+    createVariation,
+  }
+}
