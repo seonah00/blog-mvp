@@ -2,6 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "rm -rf .next node_modules/.cache && npm ci && next build",
   "installCommand": "npm ci",
-  "framework": "nextjs",
-  "cacheDirectories": []
+  "framework": "nextjs"
 }
