@@ -12,6 +12,7 @@ import { useState } from 'react'
 import { useProjectStore } from '@/stores/project-store'
 import { generateReviewDigestAction } from '@/features/research/actions'
 import type { ReviewDigest, UserReviewInput } from '@/types'
+import type { WebEvidence } from '@/types/evidence'
 
 interface ReviewDigestCardProps {
   projectId: string
@@ -20,6 +21,7 @@ interface ReviewDigestCardProps {
   reviews: UserReviewInput[]
   digest: ReviewDigest | undefined
   onDigestGenerated: (digest: ReviewDigest) => void
+  webEvidence?: WebEvidence[]
 }
 
 type GenerateStatus = 'idle' | 'loading' | 'success' | 'error'

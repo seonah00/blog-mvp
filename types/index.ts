@@ -20,6 +20,9 @@ export type {
   ImagePrompt,
   ThumbnailSettings,
   ParagraphDraft,
+  // NEW: Content Purpose Types
+  ThreadsContentPurpose,
+  KarrotContentPurpose,
 } from './common'
 
 // ───────────────────────────────────────────────
@@ -43,6 +46,10 @@ export type {
   RestaurantDraftVersion,
   RestaurantDraftGenerationMode,
   RestaurantDraftVariationPreset,
+  // NEW: Canonical Place types
+  CanonicalPlace,
+  CanonicalPlaceInput,
+  PlaceProvider,
 } from './restaurant'
 
 // ───────────────────────────────────────────────
@@ -69,10 +76,58 @@ export type {
 } from './informational'
 
 // ───────────────────────────────────────────────
+// Evidence Types (NEW)
+// ───────────────────────────────────────────────
+export type {
+  WebEvidence,
+  EvidenceSource,
+  EvidenceSourceType,
+  EvidenceConfidence,
+  EvidenceCollection,
+  EvidenceQueryInput,
+  EvidenceSummary,
+} from './evidence'
+
+// ───────────────────────────────────────────────
+// Threads Domain Types (NEW)
+// ───────────────────────────────────────────────
+export type {
+  ThreadsProjectMeta,
+  ThreadsStrategyType,
+  ThreadsBusinessInfo,
+  ThreadsResearchInput,
+  ThreadsResearchOutput,
+  ThreadsDraftSettings,
+  ThreadItem,
+  ThreadsDraftOutput,
+  ThreadsDraftInput,
+  ThreadsAssistantMessage,
+  ThreadsDraftHelperData,
+  ThreadsDraftVersion,
+} from './threads'
+
+// ───────────────────────────────────────────────
+// Karrot Domain Types (NEW)
+// ───────────────────────────────────────────────
+export type {
+  KarrotProjectMeta,
+  KarrotResearchInput,
+  KarrotResearchOutput,
+  KarrotDraftSettings,
+  KarrotDraftOutput,
+  KarrotDraftInput,
+  KarrotAssistantMessage,
+  KarrotDraftHelperData,
+  KarrotDraftVersion,
+} from './karrot'
+
+// ───────────────────────────────────────────────
 // Project (Composite)
 // ───────────────────────────────────────────────
 import type { RestaurantProjectMeta } from './restaurant'
 import type { InformationalProjectMeta } from './informational'
+import type { ThreadsProjectMeta } from './threads'
+import type { KarrotProjectMeta } from './karrot'
 import type { ProjectType, ProjectTone, ProjectStatus } from './common'
 
 /**
@@ -93,6 +148,8 @@ export interface Project {
   /** 타입별 메타데이터 */
   restaurantMeta?: RestaurantProjectMeta
   informationalMeta?: InformationalProjectMeta
+  threadsMeta?: ThreadsProjectMeta
+  karrotMeta?: KarrotProjectMeta
 }
 
 /**
@@ -109,4 +166,6 @@ export interface CreateProjectInput {
   /** 타입별 메타데이터 */
   restaurantMeta?: RestaurantProjectMeta
   informationalMeta?: InformationalProjectMeta
+  threadsMeta?: ThreadsProjectMeta
+  karrotMeta?: KarrotProjectMeta
 }

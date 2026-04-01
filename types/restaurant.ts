@@ -39,7 +39,7 @@ export interface RestaurantProjectMeta {
 export interface PlaceCandidate {
   id: string
   /** 검색 출처 */
-  source: 'google_places_api' | 'naver_local_api' | 'manual'
+  source: 'google_places_api' | 'naver_local_api' | 'kakao_local_api' | 'manual'
   /** 외부 API의 원본 ID */
   externalId: string
   /** 매장명 */
@@ -71,6 +71,8 @@ export interface PlaceCandidate {
 /**
  * 정규화된 장소 프로필
  * 여러 소스의 데이터를 통합한 표준 형식
+ * 
+ * @deprecated CanonicalPlace를 사용하세요. 기존 코드 호환성을 위해 유지.
  */
 export interface NormalizedPlaceProfile {
   /** 매장명 */
@@ -89,6 +91,132 @@ export interface NormalizedPlaceProfile {
   sources: ('google' | 'naver' | 'manual')[]
   /** 정규화 시점 */
   normalizedAt: string
+}
+
+// ───────────────────────────────────────────────
+// Canonical Place (NEW) - Naver/Kakao 통합 구조
+// ───────────────────────────────────────────────
+
+/** 
+ * 데이터 소스 제공자 
+ */
+export type PlaceProvider = 'naver' | 'kakao' | 'google' | 'manual'
+
+/** 
+ * Canonical Place - Naver/Kakao 통합 표준 장소 모델
+ * 여러 소스의 데이터를 병합하여 하나의 신뢰할 수 있는 장소 정보로 정규화
+ */
+export interface CanonicalPlace {
+  /** 난수 canonical ID (난독화된 해시) */
+  id: string
+  
+  // ── 기본 정보 ──
+  
+  /** 정규화된 매장명 (Naver 우선) */
+  name: string
+  
+  /** 
+   * 주소 정보 
+   * Naver: 지번/도로명 주소 제공
+   * Kakao: 도로명 주소, 행정구역 제공
+   */
+  address: {
+    /** 지번주소 (Naver) */
+    jibun?: string
+    /** 도로명주소 (Naver/Kakao) */
+    road: string
+    /** 표시용 통합 주소 */
+    full: string
+    /** 행정구역 (Kakao - 시/구/동) */
+    region?: string
+  }
+  
+  /** 
+   * 좌표 정보
+   * Kakao 좌표 우선 (정확도 높음)
+   */
+  coordinates: {
+    lat: number
+    lng: number
+    /** 좌표 출처 */
+    source: 'kakao' | 'naver'
+  }
+  
+  /** 
+   * 카테고리 정보
+   * Naver 분류체계 우선 (한국어, 계층 구조)
+   */
+  category: {
+    /** 대분류 (예: 음식점) */
+    primary: string
+    /** 소분류 (예: 양식, 파스타전문) */
+    secondary?: string
+    /** 전체 분류 경로 */
+    full?: string
+    /** 출처 */
+    source: 'naver' | 'kakao'
+  }
+  
+  // ── 연락처/링크 ──
+  
+  contact: {
+    /** 전화번호 (Naver) */
+    phone?: string
+    /** Naver 지도 링크 */
+    naverLink?: string
+    /** Kakao 지도 링크 */
+    kakaoLink?: string
+    /** Google Maps 링크 */
+    googleLink?: string
+  }
+  
+  // ── 메타/신뢰도 ──
+  
+  /** 
+   * 데이터 신뢰도
+   * - high: Naver+Kakao 모두 일치
+   * - medium: 하나의 소스만 있거나 부분 일치
+   * - low: 충돌 있거나 정보 부족
+   */
+  confidence: 'high' | 'medium' | 'low'
+  
+  /** 
+   * 원본 소스 데이터
+   * dedupe 및 추적용
+   */
+  sources: {
+    /** Naver 원본 데이터 참조 */
+    naver?: {
+      id: string
+      link: string
+    }
+    /** Kakao 원본 데이터 참조 */
+    kakao?: {
+      id: string
+      placeUrl: string
+    }
+    /** Google 원본 (선택적) */
+    google?: {
+      placeId: string
+    }
+  }
+  
+  /** 데이터 병합 시점 */
+  normalizedAt: string
+}
+
+/**
+ * Canonical Place 생성 입력
+ */
+export interface CanonicalPlaceInput {
+  /** Naver 검색 결과 (선택적) */
+  naver?: PlaceCandidate
+  /** Kakao 검색 결과 (선택적) */
+  kakao?: PlaceCandidate
+  /** Google 검색 결과 (선택적) */
+  google?: PlaceCandidate
+  /** 우선순위 제공자 */
+  primaryProvider?: PlaceProvider
 }
 
 /**

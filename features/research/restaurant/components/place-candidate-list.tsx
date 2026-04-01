@@ -10,11 +10,12 @@
 'use client'
 
 import { useProjectStore } from '@/stores/project-store'
-import type { PlaceCandidate } from '@/types'
+import type { PlaceCandidate, CanonicalPlace } from '@/types'
 
 interface PlaceCandidateListProps {
   projectId: string
   candidates: PlaceCandidate[]
+  canonicalPlaces?: CanonicalPlace[]
 }
 
 function getSourceBadge(source: PlaceCandidate['source']) {
@@ -29,6 +30,11 @@ function getSourceBadge(source: PlaceCandidate['source']) {
       text: 'var(--accent-secondary)',
       border: 'var(--accent-secondary)'
     },
+    kakao_local_api: {
+      bg: 'var(--accent-warning-light)',
+      text: 'var(--accent-warning)',
+      border: 'var(--accent-warning)'
+    },
     manual: { 
       bg: 'var(--workspace-secondary)', 
       text: 'var(--text-tertiary)',
@@ -39,6 +45,7 @@ function getSourceBadge(source: PlaceCandidate['source']) {
   const labels: Record<string, string> = {
     google_places_api: 'Google',
     naver_local_api: 'Naver',
+    kakao_local_api: 'Kakao',
     manual: 'Mock',
   }
   
@@ -62,7 +69,7 @@ function StarRating({ rating, reviewCount }: { rating?: number; reviewCount?: nu
   )
 }
 
-export function PlaceCandidateList({ projectId, candidates }: PlaceCandidateListProps) {
+export function PlaceCandidateList({ projectId, candidates, canonicalPlaces = [] }: PlaceCandidateListProps) {
   const selectPlace = useProjectStore((state) => state.selectPlace)
 
   const handleSelect = (candidate: PlaceCandidate) => {
@@ -82,7 +89,16 @@ export function PlaceCandidateList({ projectId, candidates }: PlaceCandidateList
       normalizedAt: new Date().toISOString(),
     }
     
-    selectPlace(projectId, normalizedPlace)
+    // 해당 candidate와 매칭되는 canonicalPlace 찾기
+    // 이름과 주소로 매칭 (정확한 매칭)
+    const matchingCanonical = canonicalPlaces.find(cp => {
+      const nameMatch = cp.name === candidate.name
+      const addressMatch = cp.address.road === candidate.roadAddress || 
+                          cp.address.jibun === candidate.address
+      return nameMatch || addressMatch
+    })
+    
+    selectPlace(projectId, normalizedPlace, matchingCanonical)
   }
 
   if (candidates.length === 0) {

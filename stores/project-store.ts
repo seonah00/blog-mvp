@@ -19,6 +19,7 @@ import type {
   // Restaurant domain types
   PlaceCandidate,
   NormalizedPlaceProfile,
+  CanonicalPlace,
   UserReviewInput,
   ReviewDigest,
   RestaurantDraftSettings,
@@ -32,13 +33,24 @@ import type {
   KeyPoint,
   TopicAnalysis,
   InformationalDraftSettings,
+  // Threads domain types (NEW)
+  ThreadsProjectMeta,
+  ThreadsDraftSettings,
+  ThreadsDraftVersion,
+  // Karrot domain types (NEW)
+  KarrotProjectMeta,
+  KarrotDraftSettings,
+  KarrotDraftVersion,
 } from '@/types'
+import type { WebEvidence } from '@/types/evidence'
 import { createId, countWords, nowIso } from '@/lib/utils'
 import {
   createMockDraftFromContext,
   createMockResearchItems,
 } from '@/lib/mock-data'
 import { generateRestaurantDraft } from '@/lib/ai/restaurant-draft'
+import { generateThreadsDraft } from '@/lib/ai/prompts/threads-draft'
+import { generateKarrotDraft } from '@/lib/ai/prompts/karrot-draft'
 
 interface ProjectStore {
   hasHydrated: boolean
@@ -56,12 +68,18 @@ interface ProjectStore {
   // ───────────────────────────────────────────────
   /** 장소 검색 후보 */
   restaurantPlaceCandidates: Record<string, PlaceCandidate[]>
+  /** Canonical 장소 목록 (검색 결과에서 병합된 데이터) */
+  restaurantCanonicalPlaces: Record<string, CanonicalPlace[]>
   /** 선택된 장소 프로필 */
   restaurantSelectedPlace: Record<string, NormalizedPlaceProfile | undefined>
+  /** 선택된 Canonical 장소 (구조화 데이터) */
+  restaurantSelectedCanonicalPlace: Record<string, CanonicalPlace | undefined>
   /** 사용자 입력 리뷰 */
   restaurantReviewInputs: Record<string, UserReviewInput[]>
   /** 리뷰 다이제스트 */
   restaurantReviewDigest: Record<string, ReviewDigest | undefined>
+  /** 웹 조사 증거 (NEW) */
+  restaurantWebEvidence: Record<string, WebEvidence[]>
   /** 초안 버전 히스토리 */
   restaurantDraftVersions: Record<string, RestaurantDraftVersion[]>
   /** 현재 선택된 초안 버전 ID */
@@ -83,6 +101,26 @@ interface ProjectStore {
   /** 초안 작성 설정 */
   informationalDraftSettings: Record<string, InformationalDraftSettings | undefined>
 
+  // ───────────────────────────────────────────────
+  // Threads Domain States (NEW)
+  // ───────────────────────────────────────────────
+  /** 스레드 메타 */
+  threadsMeta: Record<string, ThreadsProjectMeta | undefined>
+  /** 스레드 초안 설정 */
+  threadsDraftSettings: Record<string, ThreadsDraftSettings | undefined>
+  /** 스레드 초안 버전 히스토리 */
+  threadsDraftVersions: Record<string, ThreadsDraftVersion[]>
+
+  // ───────────────────────────────────────────────
+  // Karrot Domain States (NEW)
+  // ───────────────────────────────────────────────
+  /** 당근 메타 */
+  karrotMeta: Record<string, KarrotProjectMeta | undefined>
+  /** 당근 초안 설정 */
+  karrotDraftSettings: Record<string, KarrotDraftSettings | undefined>
+  /** 당근 초안 버전 히스토리 */
+  karrotDraftVersions: Record<string, KarrotDraftVersion[]>
+
   setHasHydrated: (value: boolean) => void
 
   createProject: (data: CreateProjectInput) => Project
@@ -98,6 +136,8 @@ interface ProjectStore {
 
   createDraft: (projectId: string) => Draft | undefined
   createRestaurantDraft: (projectId: string) => Promise<Draft | undefined>
+  createThreadsDraft: (projectId: string) => Promise<Draft | undefined>
+  createKarrotDraft: (projectId: string) => Promise<Draft | undefined>
   getDraft: (projectId: string) => Draft | undefined
   updateDraftContent: (projectId: string, content: string) => void
 
@@ -119,14 +159,22 @@ interface ProjectStore {
   // ───────────────────────────────────────────────
   // Restaurant Domain Actions (신규)
   // ───────────────────────────────────────────────
-  setPlaceCandidates: (projectId: string, candidates: PlaceCandidate[]) => void
+  setPlaceCandidates: (projectId: string, candidates: PlaceCandidate[], canonicalPlaces?: CanonicalPlace[]) => void
   getPlaceCandidates: (projectId: string) => PlaceCandidate[]
-  selectPlace: (projectId: string, place: NormalizedPlaceProfile) => void
+  getCanonicalPlaces: (projectId: string) => CanonicalPlace[]
+  selectPlace: (projectId: string, place: NormalizedPlaceProfile, canonicalPlace?: CanonicalPlace) => void
   getSelectedPlace: (projectId: string) => NormalizedPlaceProfile | undefined
+  getSelectedCanonicalPlace: (projectId: string) => CanonicalPlace | undefined
   addReviewInput: (projectId: string, review: Omit<UserReviewInput, 'id' | 'createdAt'>) => void
   getReviewInputs: (projectId: string) => UserReviewInput[]
   setReviewDigest: (projectId: string, digest: ReviewDigest) => void
   getReviewDigest: (projectId: string) => ReviewDigest | undefined
+  // Web Evidence (NEW)
+  addWebEvidence: (projectId: string, evidence: WebEvidence) => void
+  setWebEvidence: (projectId: string, evidence: WebEvidence[]) => void
+  getWebEvidence: (projectId: string) => WebEvidence[]
+  removeWebEvidence: (projectId: string, evidenceId: string) => void
+  clearWebEvidence: (projectId: string) => void
 
   // ───────────────────────────────────────────────
   // Draft Version Management (NEW)
@@ -200,9 +248,12 @@ export const useProjectStore = create<ProjectStore>()(
 
       // Restaurant Domain States 초기화 (신규)
       restaurantPlaceCandidates: {},
+      restaurantCanonicalPlaces: {},
       restaurantSelectedPlace: {},
+      restaurantSelectedCanonicalPlace: {},
       restaurantReviewInputs: {},
       restaurantReviewDigest: {},
+      restaurantWebEvidence: {},
       restaurantDraftVersions: {},
       restaurantCurrentDraftVersionId: {},
 
@@ -213,6 +264,16 @@ export const useProjectStore = create<ProjectStore>()(
       informationalTopicAnalysis: {},
       informationalKeyPoints: {},
       informationalDraftSettings: {},
+
+      // Threads Domain States 초기화 (NEW)
+      threadsMeta: {},
+      threadsDraftSettings: {},
+      threadsDraftVersions: {},
+
+      // Karrot Domain States 초기화 (NEW)
+      karrotMeta: {},
+      karrotDraftSettings: {},
+      karrotDraftVersions: {},
 
       setHasHydrated: (value) => set({ hasHydrated: value }),
 
@@ -228,6 +289,11 @@ export const useProjectStore = create<ProjectStore>()(
           status: 'researching',
           createdAt: nowIso(),
           updatedAt: nowIso(),
+          // 타입별 메타데이터 저장
+          restaurantMeta: data.restaurantMeta,
+          informationalMeta: data.informationalMeta,
+          threadsMeta: data.threadsMeta,
+          karrotMeta: data.karrotMeta,
         }
 
         const research = createMockResearchItems(project)
@@ -242,6 +308,19 @@ export const useProjectStore = create<ProjectStore>()(
             ...state.selectedResearchIds,
             [project.id]: research.slice(0, 2).map((item) => item.id),
           },
+          // 타입별 메타 상태 저장
+          ...(data.threadsMeta && {
+            threadsMeta: {
+              ...state.threadsMeta,
+              [project.id]: data.threadsMeta,
+            },
+          }),
+          ...(data.karrotMeta && {
+            karrotMeta: {
+              ...state.karrotMeta,
+              [project.id]: data.karrotMeta,
+            },
+          }),
         }))
 
         return project
@@ -325,11 +404,18 @@ export const useProjectStore = create<ProjectStore>()(
 
         if (!project || !settings) return undefined
 
-        // Restaurant 타입은 별도 처리
+        // 타입별 별도 처리
         if (project.type === 'restaurant') {
           return undefined // createRestaurantDraft 사용하도록 유도
         }
+        if (project.type === 'threads') {
+          return undefined // createThreadsDraft 사용하도록 유도
+        }
+        if (project.type === 'karrot') {
+          return undefined // createKarrotDraft 사용하도록 유도
+        }
 
+        // Informational 및 기타 타입은 기본 처리
         const content = createMockDraftFromContext({
           project,
           settings,
@@ -360,7 +446,11 @@ export const useProjectStore = create<ProjectStore>()(
        * Restaurant 타입 전용 초안 생성
        * ReviewDigest와 PlaceProfile을 활용한 구조화된 초안 생성
        * 
-       * TODO: 실제 AI provider 연동 (lib/ai/client.ts)
+       * NEW: canonicalPlace와 webEvidence 지원
+       * 데이터 신뢰 우선순위:
+       * 1. 사용자 직접 입력 (reviewDigest)
+       * 2. 구조화 장소 데이터 (canonicalPlace)
+       * 3. 웹 조사 데이터 (webEvidence)
        */
       createRestaurantDraft: async (projectId) => {
         const existing = get().drafts[projectId]
@@ -369,7 +459,9 @@ export const useProjectStore = create<ProjectStore>()(
         const project = get().getProject(projectId)
         const settings = get().getDraftSettings(projectId)
         const placeProfile = get().getSelectedPlace(projectId)
+        const canonicalPlace = get().getSelectedCanonicalPlace(projectId)
         const reviewDigest = get().getReviewDigest(projectId)
+        const webEvidence = get().getWebEvidence(projectId)
 
         if (!project || !settings) return undefined
         if (project.type !== 'restaurant') return undefined
@@ -440,13 +532,19 @@ ${project.topic}에 대해 작성하는 글입니다.
         }
 
         try {
-          // AI 초안 생성
+          // AI 초안 생성 (canonicalPlace와 webEvidence 포함)
+          // 데이터 신뢰 우선순위:
+          // 1. 사용자 직접 입력 (reviewDigest)
+          // 2. 구조화 장소 데이터 (canonicalPlace)
+          // 3. 웹 조사 데이터 (webEvidence)
           const output = await generateRestaurantDraft({
             placeProfile,
+            canonicalPlace: canonicalPlace || undefined,
             reviewDigest,
             settings: restaurantSettings,
             projectTitle: project.title,
             projectTopic: project.topic,
+            webEvidence: webEvidence.length > 0 ? webEvidence : undefined,
           })
 
           const draft: Draft = {
@@ -469,6 +567,180 @@ ${project.topic}에 대해 작성하는 글입니다.
           return draft
         } catch (error) {
           console.error('[createRestaurantDraft] Failed:', error)
+          return undefined
+        }
+      },
+
+      /**
+       * Threads 타입 전용 초안 생성
+       * purpose(food/info/branding) + strategyType(story/tip/engage) 조합으로 프롬프트 구성
+       */
+      createThreadsDraft: async (projectId) => {
+        const existing = get().drafts[projectId]
+        if (existing) return existing
+
+        const project = get().getProject(projectId)
+        const meta = get().threadsMeta[projectId]
+        const settings = get().threadsDraftSettings[projectId]
+
+        if (!project || project.type !== 'threads') return undefined
+
+        // AI 입력 구성
+        const threadsSettings = settings || {
+          purpose: meta?.purpose || 'info',
+          strategyType: meta?.strategyType || 'tip',
+          threadCount: 5,
+          includeImages: true,
+          imagePosition: 'middle' as const,
+          hashtagStyle: 'moderate' as const,
+          ctaType: 'none' as const,
+          businessInfo: meta?.businessInfo,
+        }
+
+        // 벤치마크 링크 요약 (있는 경우)
+        const benchmarkSummary = meta?.benchmarkLinks 
+          ? `참고할 벤치마크: ${meta.benchmarkLinks}` 
+          : undefined
+
+        const researchData = {
+          keyPoints: [
+            `${project.topic}에 대한 핵심 포인트`,
+            `${project.targetAudience || '독자'}를 위한 주요 내용`,
+            '추가적인 인사이트와 정보',
+          ],
+          suggestedHooks: meta?.hook ? [meta.hook] : [
+            `${project.topic} - 이거 알아두세요!`,
+            `진짜 ${project.topic} 공개합니다`,
+            `${project.topic}, 어떻게 생각하세요?`,
+          ],
+          suggestedHashtags: ['#스레드', '#정보공유', '#팔로우'],
+        }
+
+        try {
+          // AI 초안 생성 - 새 구조 반영
+          const output = await generateThreadsDraft({
+            meta: {
+              purpose: meta?.purpose || 'info',
+              strategyType: meta?.strategyType || 'tip',
+              targetAudience: project.targetAudience,
+              tone: meta?.tone || 'casual',
+              hook: meta?.hook,
+              topic: project.topic,
+              benchmarkLinks: benchmarkSummary,
+              businessInfo: meta?.businessInfo,
+            },
+            research: researchData,
+            settings: threadsSettings,
+          })
+
+          // Draft 형식으로 변환
+          const content = [
+            `# ${output.title}`,
+            '',
+            ...output.threads.map(t => 
+              `${t.order}. ${t.content}${t.imageDescription ? `\n[이미지: ${t.imageDescription}]` : ''}`
+            ),
+            '',
+            output.hashtags.join(' '),
+          ].join('\n')
+
+          const draft: Draft = {
+            projectId,
+            title: output.title,
+            content,
+            version: 1,
+            wordCount: output.metadata.wordCount,
+            updatedAt: nowIso(),
+            lastSavedAt: nowIso(),
+          }
+
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: draft,
+            },
+          }))
+
+          return draft
+        } catch (error) {
+          console.error('[createThreadsDraft] Failed:', error)
+          return undefined
+        }
+      },
+
+      /**
+       * Karrot 타입 전용 초안 생성
+       * purpose(ad/food/community)에 따라 다른 프롬프트 사용
+       */
+      createKarrotDraft: async (projectId) => {
+        const existing = get().drafts[projectId]
+        if (existing) return existing
+
+        const project = get().getProject(projectId)
+        const meta = get().karrotMeta[projectId]
+        const settings = get().karrotDraftSettings[projectId]
+
+        if (!project || project.type !== 'karrot') return undefined
+
+        // AI 입력 구성
+        const karrotSettings = settings || {
+          purpose: meta?.purpose || 'community',
+          includePrice: true,
+          includeLocation: true,
+          includeContact: true,
+          emojiLevel: 'minimal' as const,
+          urgency: 'none' as const,
+          includeImages: true,
+        }
+
+        const researchData = {
+          keyPoints: [
+            `${meta?.region || '동네'} 관련 핵심 정보`,
+            `${project.topic}에 대한 주요 내용`,
+            '동네 주민들이 공감할 포인트',
+          ],
+          localKeywords: [meta?.region || '동네', '우리동네', '근처'],
+          suggestedTitles: [
+            `${meta?.region || '동네'} ${project.topic}`,
+            `${meta?.region || '동네'} 주민분들`,
+            `${project.topic} 공유해요`,
+          ],
+        }
+
+        try {
+          // AI 초안 생성
+          const output = await generateKarrotDraft({
+            meta: {
+              purpose: meta?.purpose || 'community',
+              region: meta?.region || '',
+              targetAudience: project.targetAudience,
+              businessType: meta?.businessType,
+              topic: project.topic,
+            },
+            research: researchData,
+            settings: karrotSettings,
+          })
+
+          const draft: Draft = {
+            projectId,
+            title: output.title,
+            content: output.content + '\n\n' + output.hashtags.join(' '),
+            version: 1,
+            wordCount: output.metadata.wordCount,
+            updatedAt: nowIso(),
+            lastSavedAt: nowIso(),
+          }
+
+          set((state) => ({
+            drafts: {
+              ...state.drafts,
+              [projectId]: draft,
+            },
+          }))
+
+          return draft
+        } catch (error) {
+          console.error('[createKarrotDraft] Failed:', error)
           return undefined
         }
       },
@@ -583,27 +855,41 @@ ${project.topic}에 대해 작성하는 글입니다.
       // ───────────────────────────────────────────────
       // Restaurant Domain Actions 구현 (신규)
       // ───────────────────────────────────────────────
-      setPlaceCandidates: (projectId, candidates) => {
+      setPlaceCandidates: (projectId, candidates, canonicalPlaces) => {
         set((state) => ({
           restaurantPlaceCandidates: {
             ...state.restaurantPlaceCandidates,
             [projectId]: candidates,
+          },
+          restaurantCanonicalPlaces: {
+            ...state.restaurantCanonicalPlaces,
+            [projectId]: canonicalPlaces ?? [],
           },
         }))
       },
       getPlaceCandidates: (projectId) => {
         return get().restaurantPlaceCandidates[projectId] ?? []
       },
-      selectPlace: (projectId, place) => {
+      getCanonicalPlaces: (projectId) => {
+        return get().restaurantCanonicalPlaces[projectId] ?? []
+      },
+      selectPlace: (projectId, place, canonicalPlace) => {
         set((state) => ({
           restaurantSelectedPlace: {
             ...state.restaurantSelectedPlace,
             [projectId]: place,
           },
+          restaurantSelectedCanonicalPlace: {
+            ...state.restaurantSelectedCanonicalPlace,
+            [projectId]: canonicalPlace,
+          },
         }))
       },
       getSelectedPlace: (projectId) => {
         return get().restaurantSelectedPlace[projectId]
+      },
+      getSelectedCanonicalPlace: (projectId) => {
+        return get().restaurantSelectedCanonicalPlace[projectId]
       },
       addReviewInput: (projectId, review) => {
         const newReview: UserReviewInput = {
@@ -641,6 +927,54 @@ ${project.topic}에 대해 작성하는 글입니다.
       },
       getReviewDigest: (projectId) => {
         return get().restaurantReviewDigest[projectId]
+      },
+
+      // ───────────────────────────────────────────────
+      // Web Evidence 구현 (NEW)
+      // ───────────────────────────────────────────────
+      addWebEvidence: (projectId, evidence) => {
+        set((state) => {
+          const existing = state.restaurantWebEvidence[projectId] ?? []
+          // 같은 장소(query)에 대한 evidence는 교체 (dedupe)
+          const filtered = existing.filter(
+            (e) => !(e.placeName === evidence.placeName && e.query === evidence.query)
+          )
+          return {
+            restaurantWebEvidence: {
+              ...state.restaurantWebEvidence,
+              [projectId]: [...filtered, evidence],
+            },
+          }
+        })
+      },
+      setWebEvidence: (projectId, evidence) => {
+        set((state) => ({
+          restaurantWebEvidence: {
+            ...state.restaurantWebEvidence,
+            [projectId]: evidence,
+          },
+        }))
+      },
+      getWebEvidence: (projectId) => {
+        return get().restaurantWebEvidence[projectId] ?? []
+      },
+      removeWebEvidence: (projectId, evidenceId) => {
+        set((state) => ({
+          restaurantWebEvidence: {
+            ...state.restaurantWebEvidence,
+            [projectId]: (state.restaurantWebEvidence[projectId] ?? []).filter(
+              (e) => e.id !== evidenceId
+            ),
+          },
+        }))
+      },
+      clearWebEvidence: (projectId) => {
+        set((state) => ({
+          restaurantWebEvidence: {
+            ...state.restaurantWebEvidence,
+            [projectId]: [],
+          },
+        }))
       },
 
       // ───────────────────────────────────────────────
@@ -1192,9 +1526,12 @@ ${project.topic}에 대해 작성하는 글입니다.
           thumbnailSettings: {},
           // Domain states reset (신규)
           restaurantPlaceCandidates: {},
+          restaurantCanonicalPlaces: {},
           restaurantSelectedPlace: {},
+          restaurantSelectedCanonicalPlace: {},
           restaurantReviewInputs: {},
           restaurantReviewDigest: {},
+          restaurantWebEvidence: {},
           restaurantDraftVersions: {},
           restaurantCurrentDraftVersionId: {},
           informationalSources: {},
@@ -1218,9 +1555,12 @@ ${project.topic}에 대해 작성하는 글입니다.
         thumbnailSettings: state.thumbnailSettings,
         // Domain states persist (신규)
         restaurantPlaceCandidates: state.restaurantPlaceCandidates,
+        restaurantCanonicalPlaces: state.restaurantCanonicalPlaces,
         restaurantSelectedPlace: state.restaurantSelectedPlace,
+        restaurantSelectedCanonicalPlace: state.restaurantSelectedCanonicalPlace,
         restaurantReviewInputs: state.restaurantReviewInputs,
         restaurantReviewDigest: state.restaurantReviewDigest,
+        restaurantWebEvidence: state.restaurantWebEvidence,
         restaurantDraftVersions: state.restaurantDraftVersions,
         restaurantCurrentDraftVersionId: state.restaurantCurrentDraftVersionId,
         informationalSources: state.informationalSources,

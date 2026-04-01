@@ -24,6 +24,8 @@ import type {
   ReviewDigest,
   NormalizedPlaceProfile,
   RestaurantDraftSettings,
+  CanonicalPlace,
+  WebEvidence,
 } from '@/types'
 
 export interface DraftGenerationInput {
@@ -58,6 +60,10 @@ export interface GenerateRestaurantDraftInput {
   mode?: 'initial' | 'regenerate' | 'variation'
   /** 변형 프리셋 (mode='variation'일 때 사용) */
   preset?: import('@/types').RestaurantDraftVariationPreset
+  /** 정규화된 장소 정보 (canonical) */
+  canonicalPlace?: CanonicalPlace
+  /** 웹 검색 증거 데이터 */
+  webEvidence?: WebEvidence[]
 }
 
 /**

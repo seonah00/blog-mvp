@@ -10,7 +10,13 @@
 // ───────────────────────────────────────────────
 
 /** 콘텐츠 타입 */
-export type ProjectType = 'restaurant' | 'informational'
+export type ProjectType = 'restaurant' | 'informational' | 'threads' | 'karrot'
+
+/** 스레드글 하위 목적 */
+export type ThreadsContentPurpose = 'food' | 'info' | 'branding'
+
+/** 당근글 하위 목적 */
+export type KarrotContentPurpose = 'ad' | 'food' | 'community'
 
 /** 글 톤 */
 export type ProjectTone =
