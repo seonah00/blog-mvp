@@ -191,7 +191,7 @@ export function buildThreadsUserPrompt(input: ThreadsDraftInput): string {
 
   const toneLabels: Record<string, string> = {
     casual: '캐주얼하고 편안한',
-    witty: '재치있고 유머러스한',
+    friendly: '친근하고 편안한',
     professional: '전문적이지만 친근한',
   }
 

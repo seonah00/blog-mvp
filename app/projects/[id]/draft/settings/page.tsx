@@ -749,7 +749,7 @@ function ThreadsDraftSettingsForm({
   onComplete 
 }: { 
   projectId: string
-  project: { title: string; topic: string; targetAudience: string; keywords: string[]; threadsMeta?: { purpose: 'food' | 'info' | 'branding'; strategyType?: 'story' | 'tip' | 'engage'; tone: 'casual' | 'witty' | 'professional' } }
+  project: { title: string; topic: string; targetAudience: string; keywords: string[]; threadsMeta?: { purpose: 'food' | 'info' | 'branding'; strategyType?: 'story' | 'tip' | 'engage'; tone: 'casual' | 'friendly' | 'professional' } }
   onComplete: () => void
 }) {
   const [isGenerating, setIsGenerating] = useState(false)
@@ -768,7 +768,7 @@ function ThreadsDraftSettingsForm({
   const [settings, setSettings] = useState({
     threadCount: 5,
     includeImages: true,
-    tone: meta?.tone || 'casual' as 'casual' | 'witty' | 'professional',
+    tone: meta?.tone || 'casual' as 'casual' | 'friendly' | 'professional',
     ctaType: 'none' as 'question' | 'link' | 'follow' | 'none',
   })
 
@@ -798,9 +798,9 @@ function ThreadsDraftSettingsForm({
     { value: 'engage', label: '공감형', description: '일상 공감대 형성과 소통' },
   ]
 
-  const toneOptions: { value: 'casual' | 'witty' | 'professional'; label: string }[] = [
+  const toneOptions: { value: 'casual' | 'friendly' | 'professional'; label: string }[] = [
     { value: 'casual', label: '캐주얼' },
-    { value: 'witty', label: '위티' },
+    { value: 'friendly', label: '친근한' },
     { value: 'professional', label: '프로페셔널' },
   ]
 

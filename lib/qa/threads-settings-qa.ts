@@ -103,7 +103,7 @@ export function getExpectedToneForCombo(
 export interface SettingsSnapshot {
   purpose: 'food' | 'info' | 'branding'
   strategyType: ThreadsStrategyType
-  tone: 'casual' | 'witty' | 'professional'
+  tone: 'casual' | 'friendly' | 'professional'
   threadCount: number
   includeImages: boolean
   ctaType: 'question' | 'link' | 'follow' | 'none'
@@ -320,14 +320,14 @@ function testAllCombinations(): QAResult {
 
 function testSettingsRecovery(): QAResult {
   const snapshot = createSettingsSnapshot(
-    { purpose: 'food', strategyType: 'story', tone: 'witty' },
+    { purpose: 'food', strategyType: 'story', tone: 'friendly' },
     { threadCount: 7, includeImages: false, ctaType: 'question' }
   )
   
   const validation = validateSettingsRecovery(snapshot, {
     purpose: 'food',
     strategyType: 'story',
-    tone: 'witty',
+    tone: 'friendly',
     threadCount: 7,
     includeImages: false,
     ctaType: 'question',

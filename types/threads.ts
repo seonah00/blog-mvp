@@ -47,8 +47,8 @@ export interface ThreadsProjectMeta {
   strategyType?: ThreadsStrategyType
   /** 타겟 독자 */
   targetAudience: string
-  /** 톤: 캐주얼 / 위티 / 프로페셔널 */
-  tone: 'casual' | 'witty' | 'professional'
+  /** 톤: 캐주얼 / 친근한 / 프로페셔널 (ProjectTone과 호환) */
+  tone: 'casual' | 'friendly' | 'professional'
   /** 첫 문장 훅 (선택) */
   hook?: string
   /** 주제/키워드 */

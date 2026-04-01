@@ -44,7 +44,7 @@ export const ThreadsDraftInputSchema = z.object({
   meta: z.object({
     purpose: z.enum(['food', 'info', 'branding']).describe('하위 목적'),
     targetAudience: z.string().describe('타겟 독자'),
-    tone: z.enum(['casual', 'witty', 'professional']).describe('톤'),
+    tone: z.enum(['casual', 'friendly', 'professional']).describe('톤'),
     hook: z.string().optional().describe('첫 문장 훅'),
     topic: z.string().describe('주제'),
   }),
