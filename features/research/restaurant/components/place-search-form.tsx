@@ -14,7 +14,7 @@
 import { useState, useEffect } from 'react'
 import { useProjectStore } from '@/stores/project-store'
 import { searchPlacesAction, type SearchPlacesResult } from '@/features/research/actions'
-import { isMockModeEnabled } from '@/lib/integrations/env'
+import { isMockModeEnabled } from '@/lib/env-public'
 
 interface PlaceSearchFormProps {
   projectId: string
@@ -57,7 +57,7 @@ export function PlaceSearchForm({ projectId }: PlaceSearchFormProps) {
       
       if (result.success) {
         setSearchResult(result)
-        setPlaceCandidates(projectId, result.candidates)
+        setPlaceCandidates(projectId, result.candidates, result.canonicalPlaces)
         
         if (result.candidates.length === 0) {
           setStatus('empty')

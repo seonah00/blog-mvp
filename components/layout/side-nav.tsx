@@ -14,7 +14,10 @@ import { usePathname } from "next/navigation";
 
 const menuItems = [
   { icon: "dashboard", label: "대시보드", href: "/" },
-  { icon: "folder_open", label: "프로젝트", href: "/projects/new" },
+  { icon: "edit_document", label: "새 글쓰기", href: "/projects/new" },
+  { icon: "chat", label: "스레드 글", href: "/threads/new" },
+  { icon: "store", label: "당근 글", href: "/karrot/new" },
+  { icon: "folder", label: "프로젝트 목록", href: "/projects" },
   { icon: "settings", label: "설정", href: "/settings" },
 ];
 

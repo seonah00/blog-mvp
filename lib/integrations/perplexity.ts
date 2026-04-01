@@ -427,3 +427,188 @@ export async function quickSearch(
     sources: result.citations,
   }
 }
+
+// ============================================
+// Restaurant Research (NEW)
+// ============================================
+
+export interface RestaurantResearchQuery {
+  /** 매장명 */
+  placeName: string
+  /** 지역 */
+  region?: string
+  /** 카테고리 */
+  category?: string
+}
+
+export interface RestaurantResearchResult {
+  /** 검색어 */
+  query: string
+  /** 요약 결과 */
+  summary: string
+  /** 발견된 키워드/태그 */
+  keywords: string[]
+  /** 인용 가능한 구절 */
+  quotableTexts: string[]
+  /** 출처 링크 */
+  citations: string[]
+  /** 사용 제안 */
+  usageSuggestions: {
+    canQuoteDirectly: boolean
+    shouldParaphrase: boolean
+    requiresFactCheck: boolean
+  }
+  /** 원본 응답 */
+  rawContent: string
+}
+
+/**
+ * 맛집 장소 웹 조사
+ * 
+ * Perplexity를 사용하여 특정 장소에 대한 웹 정보를 수집합니다.
+ * 주의: 수집된 정보는 보조 자료로만 사용하고, 사실 확인이 필요합니다.
+ * 
+ * @param query - 조사할 장소 정보
+ * @returns 조사 결과
+ */
+export async function researchRestaurantPlace(
+  query: RestaurantResearchQuery
+): Promise<RestaurantResearchResult> {
+  const searchQuery = query.region
+    ? `${query.region} ${query.placeName} 후기 정보`
+    : `${query.placeName} 후기 정보`
+
+  console.log('[Perplexity] Researching restaurant:', searchQuery)
+
+  const result = await researchWithPerplexity(searchQuery, {
+    model: 'sonar-pro',
+    maxTokens: 2000,
+    recency: 'month',
+  })
+
+  // 결과 파싱 및 정제
+  const keywords = extractKeywords(result.content)
+  const quotableTexts = extractQuotableTexts(result.content)
+  
+  // 사용 제안 분석
+  const canQuoteDirectly = result.citations.length >= 2
+  const requiresFactCheck = result.content.toLowerCase().includes('확인 필요') ||
+                            result.content.toLowerCase().includes('추측') ||
+                            result.content.toLowerCase().includes('아마도')
+
+  return {
+    query: searchQuery,
+    summary: result.content,
+    keywords,
+    quotableTexts,
+    citations: result.citations,
+    usageSuggestions: {
+      canQuoteDirectly,
+      shouldParaphrase: !canQuoteDirectly,
+      requiresFactCheck,
+    },
+    rawContent: result.content,
+  }
+}
+
+/**
+ * 장소 비교 조사
+ * 
+ * 두 장소를 비교하여 차이점과 특징을 파악합니다.
+ */
+export async function compareRestaurantPlaces(
+  placeA: { name: string; region?: string },
+  placeB: { name: string; region?: string }
+): Promise<{
+  comparison: string
+  uniquePointsA: string[]
+  uniquePointsB: string[]
+  citations: string[]
+}> {
+  const queryA = placeA.region ? `${placeA.region} ${placeA.name}` : placeA.name
+  const queryB = placeB.region ? `${placeB.region} ${placeB.name}` : placeB.name
+  
+  const searchQuery = `"${queryA}"와 "${queryB}" 차이점 비교`
+
+  const result = await researchWithPerplexity(searchQuery, {
+    model: 'sonar-pro',
+    maxTokens: 2000,
+    recency: 'month',
+  })
+
+  // 간단한 파싱
+  const lines = result.content.split('\n').filter(l => l.trim())
+  const uniquePointsA: string[] = []
+  const uniquePointsB: string[] = []
+  
+  let currentSection: 'a' | 'b' | null = null
+  
+  for (const line of lines) {
+    const lower = line.toLowerCase()
+    if (lower.includes(placeA.name) && (lower.includes('차이') || lower.includes('특징'))) {
+      currentSection = 'a'
+    } else if (lower.includes(placeB.name) && (lower.includes('차이') || lower.includes('특징'))) {
+      currentSection = 'b'
+    } else if (line.startsWith('- ') || line.startsWith('• ')) {
+      const point = line.slice(2).trim()
+      if (currentSection === 'a') uniquePointsA.push(point)
+      if (currentSection === 'b') uniquePointsB.push(point)
+    }
+  }
+
+  return {
+    comparison: result.content,
+    uniquePointsA,
+    uniquePointsB,
+    citations: result.citations,
+  }
+}
+
+// ============================================
+// Helper Functions
+// ============================================
+
+/**
+ * 키워드 추출 (간단한 구현)
+ */
+function extractKeywords(content: string): string[] {
+  const keywords: string[] = []
+  const commonFoodKeywords = [
+    '맛집', '분위기', '가성비', '데이트', '혼밥', '단체',
+    '웨이팅', '예약', '주차', '포장', '배달'
+  ]
+  
+  for (const kw of commonFoodKeywords) {
+    if (content.includes(kw)) {
+      keywords.push(kw)
+    }
+  }
+  
+  return keywords.slice(0, 5)
+}
+
+/**
+ * 인용 가능한 텍스트 추출
+ */
+function extractQuotableTexts(content: string): string[] {
+  const quotes: string[] = []
+  
+  // 따옴표로 둘러싸인 구절 추출
+  const quoteRegex = /"([^"]{20,100})"/g
+  let match
+  while ((match = quoteRegex.exec(content)) !== null && quotes.length < 3) {
+    quotes.push(match[1])
+  }
+  
+  // 번호 없는 문장 추출 (20-80자)
+  if (quotes.length === 0) {
+    const sentences = content
+      .split(/[.!?]/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 20 && s.length <= 80)
+    
+    return sentences.slice(0, 3)
+  }
+  
+  return quotes
+}

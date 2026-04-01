@@ -83,7 +83,7 @@ function EditHeader({
   onSettingsClick,
 }: {
   draft: { title: string; version: number; wordCount: number; lastSavedAt?: string }
-  project: { type: 'restaurant' | 'informational'; title: string; topic: string }
+  project: { type: 'restaurant' | 'informational' | 'threads' | 'karrot'; title: string; topic: string }
   settings: { tone: string; length: string }
   autoSaveStatus: 'idle' | 'saving' | 'saved' | 'error'
   isDirty: boolean
@@ -106,7 +106,10 @@ function EditHeader({
             <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
               <span className="flex items-center gap-1">
                 <span className="material-symbols-outlined text-sm">folder</span>
-                {project.type === 'restaurant' ? '맛집' : '정보성'}
+                {project.type === 'restaurant' ? '맛집' : 
+                 project.type === 'threads' ? '스레드' :
+                 project.type === 'karrot' ? '당근' :
+                 '정보성'}
               </span>
               <span>·</span>
               <span>{draft.wordCount}단어</span>
@@ -393,6 +396,28 @@ export default function DraftEditPage() {
               onVersionSwitchRequest={handleVersionSwitchRequest}
               isDirty={isDirty}
             />
+          ) : project.type === 'threads' ? (
+            <div className="p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-tertiary)' }}>
+                Threads 글쓰기 도우미
+              </h3>
+              <div className="space-y-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <p>• 짧은 문장으로 작성하세요 (1-2문장)</p>
+                <p>• 이모지를 적절히 사용하세요</p>
+                <p>• 해시태그는 마지막에 별도로</p>
+              </div>
+            </div>
+          ) : project.type === 'karrot' ? (
+            <div className="p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-tertiary)' }}>
+                당근 글쓰기 도우미
+              </h3>
+              <div className="space-y-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <p>• 동네 친구처럼 친근하게</p>
+                <p>• 가격/위치 정보를 정확히</p>
+                <p>• 과장된 표현은 피하세요</p>
+              </div>
+            </div>
           ) : (
             <InformationalDraftHelper projectId={projectId} />
           )}

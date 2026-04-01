@@ -83,8 +83,16 @@ export default function DraftSettingsPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className={`badge ${project.type === 'restaurant' ? 'badge-warning' : 'badge-info'}`}>
-                {project.type === 'restaurant' ? '맛집' : '정보성'}
+              <span className={`badge ${
+                project.type === 'restaurant' ? 'badge-warning' : 
+                project.type === 'threads' ? 'badge-purple' :
+                project.type === 'karrot' ? 'badge-success' :
+                'badge-info'
+              }`}>
+                {project.type === 'restaurant' ? '맛집' : 
+                 project.type === 'threads' ? '스레드' :
+                 project.type === 'karrot' ? '당근' :
+                 '정보성'}
               </span>
             </div>
             <h1 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>초안 설정</h1>
@@ -100,6 +108,18 @@ export default function DraftSettingsPage() {
         <div className="max-w-3xl mx-auto">
           {project.type === 'restaurant' ? (
             <RestaurantDraftSettingsForm 
+              projectId={projectId} 
+              project={project}
+              onComplete={handleComplete}
+            />
+          ) : project.type === 'threads' ? (
+            <ThreadsDraftSettingsForm 
+              projectId={projectId} 
+              project={project}
+              onComplete={handleComplete}
+            />
+          ) : project.type === 'karrot' ? (
+            <KarrotDraftSettingsForm 
               projectId={projectId} 
               project={project}
               onComplete={handleComplete}
@@ -708,6 +728,526 @@ function InformationalDraftSettingsForm({
           {isGenerating ? (
             <>
               <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
+              생성 중...
+            </>
+          ) : (
+            <>
+              초안 생성
+              <span className="material-symbols-outlined text-sm">arrow_forward</span>
+            </>
+          )}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// Threads Settings Form (NEW)
+function ThreadsDraftSettingsForm({ 
+  projectId, 
+  project,
+  onComplete 
+}: { 
+  projectId: string
+  project: { title: string; topic: string; targetAudience: string; keywords: string[]; threadsMeta?: { purpose: 'food' | 'info' | 'branding'; strategyType?: 'story' | 'tip' | 'engage'; tone: 'casual' | 'friendly' | 'professional' } }
+  onComplete: () => void
+}) {
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const meta = useProjectStore((state) => state.threadsMeta[projectId])
+  const updateProject = useProjectStore((state) => state.updateProject)
+  const saveDraftSettings = useProjectStore((state) => state.saveDraftSettings)
+  const createThreadsDraft = useProjectStore((state) => state.createThreadsDraft)
+
+  // 2축 상태 관리
+  const [selectedPurpose, setSelectedPurpose] = useState<'food' | 'info' | 'branding'>(meta?.purpose || 'info')
+  const [selectedStrategy, setSelectedStrategy] = useState<'story' | 'tip' | 'engage'>(meta?.strategyType || 'tip')
+  
+  // 추가 설정
+  const [settings, setSettings] = useState({
+    threadCount: 5,
+    includeImages: true,
+    tone: meta?.tone || 'casual' as 'casual' | 'friendly' | 'professional',
+    ctaType: 'none' as 'question' | 'link' | 'follow' | 'none',
+  })
+
+  // 추천 전략 매핑
+  const recommendedStrategy: Record<'food' | 'info' | 'branding', 'story' | 'tip' | 'engage'> = {
+    food: 'story',
+    info: 'tip',
+    branding: 'story',
+  }
+
+  // 주제 변경 시 추천 전략 자동 적용 (사용자가 직접 변경하지 않은 경우)
+  const handlePurposeChange = (purpose: 'food' | 'info' | 'branding') => {
+    setSelectedPurpose(purpose)
+    setSelectedStrategy(recommendedStrategy[purpose])
+  }
+
+  // 라벨 정의
+  const purposeOptions: { value: 'food' | 'info' | 'branding'; label: string; description: string; icon: string }[] = [
+    { value: 'food', label: '맛집', description: '음식점 리뷰, 메뉴 소개', icon: '🍽️' },
+    { value: 'info', label: '정보', description: '팁, 가이드, 노하우', icon: '💡' },
+    { value: 'branding', label: '브랜딩', description: '브랜드 스토리, 가치', icon: '✨' },
+  ]
+
+  const strategyOptions: { value: 'story' | 'tip' | 'engage'; label: string; description: string }[] = [
+    { value: 'story', label: '스토리형', description: 'Before → Turning Point → After' },
+    { value: 'tip', label: '꿀팁형', description: '실용적 정보와 해결책 제공' },
+    { value: 'engage', label: '공감형', description: '일상 공감대 형성과 소통' },
+  ]
+
+  const toneOptions: { value: 'casual' | 'friendly' | 'professional'; label: string }[] = [
+    { value: 'casual', label: '캐주얼' },
+    { value: 'friendly', label: '친근한' },
+    { value: 'professional', label: '프로페셔널' },
+  ]
+
+  // 미리보기 텍스트 생성
+  const getPreviewText = () => {
+    const purposeText: Record<string, string> = {
+      food: '맛집/음식',
+      info: '정보/팁',
+      branding: '브랜딩',
+    }
+    const strategyText: Record<string, string> = {
+      story: '스토리텔링',
+      tip: '실용정보',
+      engage: '공감소통',
+    }
+    return `${purposeText[selectedPurpose]} × ${strategyText[selectedStrategy]} 조합으로 ${settings.threadCount}개의 스레드가 생성됩니다.`
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    setIsGenerating(true)
+    setError(null)
+
+    try {
+      // 프로젝트 메타 업데이트 (주제, 전략, 톤 저장)
+      const updatedMeta: import('@/types').ThreadsProjectMeta = {
+        purpose: selectedPurpose,
+        strategyType: selectedStrategy,
+        tone: settings.tone,
+        targetAudience: project.targetAudience || meta?.targetAudience || '',
+        topic: project.topic || meta?.topic || '',
+        hook: meta?.hook,
+        benchmarkLinks: meta?.benchmarkLinks,
+        businessInfo: meta?.businessInfo,
+      }
+      updateProject(projectId, {
+        threadsMeta: updatedMeta
+      })
+      
+      saveDraftSettings(projectId, {
+        ...defaultSettings,
+        goal: `[스레드] ${selectedPurpose}/${selectedStrategy}`,
+        customPrompt: `주제: ${selectedPurpose}, 전략: ${selectedStrategy}, 스레드: ${settings.threadCount}개`,
+      })
+
+      const draft = await createThreadsDraft(projectId)
+      if (draft) {
+        onComplete()
+      } else {
+        setError('초안 생성에 실패했습니다.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* 헤더 */}
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+          📝 스레드 글 설정
+        </h2>
+        <p className="text-sm mt-1" style={{ color: 'var(--text-tertiary)' }}>
+          주제와 전략을 선택하여 Threads 콘텐츠를 생성하세요.
+        </p>
+      </div>
+
+      {/* 1단계: 주제 선택 */}
+      <Panel>
+        <PanelHeader title="1단계. 주제 선택" />
+        <PanelBody className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            {purposeOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => handlePurposeChange(option.value)}
+                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  selectedPurpose === option.value
+                    ? 'border-purple-500 bg-purple-50'
+                    : 'border-gray-200 hover:border-purple-300 bg-white'
+                }`}
+              >
+                <div className="text-2xl mb-2">{option.icon}</div>
+                <div className={`font-semibold text-sm ${
+                  selectedPurpose === option.value ? 'text-purple-900' : 'text-gray-900'
+                }`}>
+                  {option.label}
+                </div>
+                <div className={`text-xs mt-1 ${
+                  selectedPurpose === option.value ? 'text-purple-600' : 'text-gray-500'
+                }`}>
+                  {option.description}
+                </div>
+                {selectedPurpose === option.value && (
+                  <div className="mt-2 text-xs font-medium text-purple-600">
+                    ✓ 선택됨
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+          
+          {/* 추천 전략 안내 */}
+          <div className="mt-3 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+            💡 <strong>{purposeOptions.find(p => p.value === selectedPurpose)?.label}</strong> 주제에는 
+            <strong> {strategyOptions.find(s => s.value === recommendedStrategy[selectedPurpose])?.label}</strong>를 추천합니다.
+          </div>
+        </PanelBody>
+      </Panel>
+
+      {/* 2단계: 전략 선택 */}
+      <Panel>
+        <PanelHeader title="2단계. 전략 선택" />
+        <PanelBody className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            {strategyOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSelectedStrategy(option.value)}
+                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  selectedStrategy === option.value
+                    ? 'border-indigo-500 bg-indigo-50'
+                    : 'border-gray-200 hover:border-indigo-300 bg-white'
+                }`}
+              >
+                <div className={`font-semibold text-sm ${
+                  selectedStrategy === option.value ? 'text-indigo-900' : 'text-gray-900'
+                }`}>
+                  {option.label}
+                </div>
+                <div className={`text-xs mt-1 ${
+                  selectedStrategy === option.value ? 'text-indigo-600' : 'text-gray-500'
+                }`}>
+                  {option.description}
+                </div>
+                {selectedStrategy === option.value && (
+                  <div className="mt-2 text-xs font-medium text-indigo-600">
+                    ✓ 선택됨
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </PanelBody>
+      </Panel>
+
+      {/* 미리보기 박스 */}
+      <div 
+        className="p-4 rounded-xl border-l-4"
+        style={{ 
+          backgroundColor: 'var(--accent-primary-light)', 
+          borderLeftColor: 'var(--accent-primary)'
+        }}
+      >
+        <div className="flex items-center gap-2 mb-2">
+          <span className="material-symbols-outlined text-sm" style={{ color: 'var(--accent-primary)' }}>visibility</span>
+          <span className="text-sm font-medium" style={{ color: 'var(--accent-primary)' }}>선택 조합 미리보기</span>
+        </div>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          {getPreviewText()}
+        </p>
+        <div className="flex gap-2 mt-2">
+          <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700">
+            {purposeOptions.find(p => p.value === selectedPurpose)?.label}
+          </span>
+          <span className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700">
+            {strategyOptions.find(s => s.value === selectedStrategy)?.label}
+          </span>
+        </div>
+      </div>
+
+      {/* 추가 설정 */}
+      <Panel>
+        <PanelHeader title="추가 설정" />
+        <PanelBody className="space-y-4">
+          {/* Tone Selection */}
+          <div>
+            <FieldLabel label="톤" />
+            <div className="flex flex-wrap gap-2">
+              {toneOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSettings({ ...settings, tone: option.value })}
+                  className={`px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
+                    settings.tone === option.value
+                      ? 'border-gray-800 bg-gray-800 text-white'
+                      : 'border-gray-300 hover:border-gray-400 bg-white text-gray-700'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Thread Count */}
+          <div>
+            <FieldLabel label="스레드 개수" />
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={3}
+                max={10}
+                value={settings.threadCount}
+                onChange={(e) => setSettings({ ...settings, threadCount: parseInt(e.target.value) })}
+                className="flex-1"
+              />
+              <span className="text-sm font-medium w-8 text-center px-2 py-1 bg-gray-100 rounded">
+                {settings.threadCount}
+              </span>
+            </div>
+          </div>
+
+          {/* Include Images */}
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="includeImages"
+              checked={settings.includeImages}
+              onChange={(e) => setSettings({ ...settings, includeImages: e.target.checked })}
+              className="w-4 h-4"
+            />
+            <label htmlFor="includeImages" className="text-sm">이미지 포함</label>
+          </div>
+
+          {/* CTA Type */}
+          <div>
+            <FieldLabel label="마무리 CTA" />
+            <select
+              value={settings.ctaType}
+              onChange={(e) => setSettings({ ...settings, ctaType: e.target.value as typeof settings.ctaType })}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="none">없음</option>
+              <option value="question">질문형 ("여러분은 어떠세요?")</option>
+              <option value="follow">팔로우 유도</option>
+              <option value="link">링크 클릭</option>
+            </select>
+          </div>
+        </PanelBody>
+      </Panel>
+
+      {/* Error */}
+      {error && (
+        <div className="p-3 rounded-md text-sm" style={{ backgroundColor: 'var(--accent-critical-light)', color: 'var(--accent-critical)' }}>
+          {error}
+        </div>
+      )}
+
+      {/* Submit */}
+      <div className="flex justify-end pt-4">
+        <button
+          type="submit"
+          disabled={isGenerating}
+          className="btn-primary flex items-center gap-2"
+        >
+          {isGenerating ? (
+            <>
+              <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+              생성 중...
+            </>
+          ) : (
+            <>
+              초안 생성
+              <span className="material-symbols-outlined text-sm">arrow_forward</span>
+            </>
+          )}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// Karrot Settings Form (NEW)
+function KarrotDraftSettingsForm({ 
+  projectId, 
+  project,
+  onComplete 
+}: { 
+  projectId: string
+  project: { title: string; topic: string; targetAudience: string; keywords: string[]; karrotMeta?: { purpose: 'ad' | 'food' | 'community'; region: string; businessType?: string } }
+  onComplete: () => void
+}) {
+  const [settings, setSettings] = useState({
+    includePrice: true,
+    includeLocation: true,
+    includeContact: true,
+    emojiLevel: 'minimal' as 'none' | 'minimal' | 'moderate',
+    urgency: 'none' as 'none' | 'soft' | 'strong',
+    includeImages: true,
+  })
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const meta = useProjectStore((state) => state.karrotMeta[projectId])
+  const saveDraftSettings = useProjectStore((state) => state.saveDraftSettings)
+  const createKarrotDraft = useProjectStore((state) => state.createKarrotDraft)
+
+  const purpose = meta?.purpose || 'community'
+  const purposeLabels: Record<string, string> = {
+    ad: '광고/홍보',
+    food: '맛집 소개',
+    community: '동네 소통',
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    setIsGenerating(true)
+    setError(null)
+
+    try {
+      saveDraftSettings(projectId, {
+        ...defaultSettings,
+        goal: `[당근] ${project.title} - ${purposeLabels[purpose]}`,
+        customPrompt: `목적: ${purpose}, 동네: ${meta?.region || ''}, 이모지: ${settings.emojiLevel}`,
+      })
+
+      const draft = await createKarrotDraft(projectId)
+      if (draft) {
+        onComplete()
+      } else {
+        setError('초안 생성에 실패했습니다.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Meta Info */}
+      <Panel>
+        <PanelHeader title="당근 글 정보" />
+        <PanelBody className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="badge badge-success">{purposeLabels[purpose]}</span>
+            {meta?.region && <span className="badge badge-info">{meta.region}</span>}
+          </div>
+          {meta?.businessType && (
+            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+              업종: {meta.businessType}
+            </p>
+          )}
+          <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+            {project.topic}
+          </p>
+        </PanelBody>
+      </Panel>
+
+      {/* Settings */}
+      <Panel>
+        <PanelHeader title="생성 설정" />
+        <PanelBody className="space-y-4">
+          {/* Include Options */}
+          <div className="space-y-2">
+            {purpose === 'ad' && (
+              <>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="includePrice"
+                    checked={settings.includePrice}
+                    onChange={(e) => setSettings({ ...settings, includePrice: e.target.checked })}
+                  />
+                  <label htmlFor="includePrice" className="text-sm">가격/할인 정보 포함</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="includeContact"
+                    checked={settings.includeContact}
+                    onChange={(e) => setSettings({ ...settings, includeContact: e.target.checked })}
+                  />
+                  <label htmlFor="includeContact" className="text-sm">연락처 포함</label>
+                </div>
+              </>
+            )}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="includeLocation"
+                checked={settings.includeLocation}
+                onChange={(e) => setSettings({ ...settings, includeLocation: e.target.checked })}
+              />
+              <label htmlFor="includeLocation" className="text-sm">위치 정보 포함</label>
+            </div>
+          </div>
+
+          {/* Emoji Level */}
+          <div>
+            <FieldLabel label="이모지 레벨" />
+            <select
+              value={settings.emojiLevel}
+              onChange={(e) => setSettings({ ...settings, emojiLevel: e.target.value as typeof settings.emojiLevel })}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="none">없음</option>
+              <option value="minimal">최소한</option>
+              <option value="moderate">적당히</option>
+            </select>
+          </div>
+
+          {/* Urgency */}
+          {purpose === 'ad' && (
+            <div>
+              <FieldLabel label="마감 임박 표현" />
+              <select
+                value={settings.urgency}
+                onChange={(e) => setSettings({ ...settings, urgency: e.target.value as typeof settings.urgency })}
+                className="w-full rounded-md border px-3 py-2 text-sm"
+              >
+                <option value="none">없음</option>
+                <option value="soft">부드럽게</option>
+                <option value="strong">강하게</option>
+              </select>
+            </div>
+          )}
+        </PanelBody>
+      </Panel>
+
+      {/* Error */}
+      {error && (
+        <div className="p-3 rounded-md text-sm" style={{ backgroundColor: 'var(--accent-critical-light)', color: 'var(--accent-critical)' }}>
+          {error}
+        </div>
+      )}
+
+      {/* Submit */}
+      <div className="flex justify-end pt-4">
+        <button
+          type="submit"
+          disabled={isGenerating}
+          className="btn-primary flex items-center gap-2"
+        >
+          {isGenerating ? (
+            <>
+              <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
               생성 중...
             </>
           ) : (

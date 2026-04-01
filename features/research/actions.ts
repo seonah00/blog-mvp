@@ -2,29 +2,42 @@
  * Research Actions
  * 
  * Server/Client actions for research operations
- * - Place search with parallel API calls
+ * - Place search with parallel API calls (Naver/Kakao/Google)
  * - Result normalization and deduplication
  * - Review digest generation
+ * - Optional Perplexity web research
  * 
  * TODO: 검색 캐시/요청 제한 - 동일 query 재검색 방지
  * TODO: observability/logging - 검색 성공률/응답시간 모니터링
- * TODO: 실제 AI provider 기반 요약 연동
  */
 
 'use server'
 
 import { searchGooglePlaces } from '@/lib/integrations/google-places'
 import { searchNaverLocal } from '@/lib/integrations/naver-local'
-import { shouldUseMockPlaces, isGooglePlacesAvailable, isNaverLocalAvailable } from '@/lib/integrations/env'
+import { searchKakaoLocal } from '@/lib/integrations/kakao-local'
+import { 
+  shouldUseMockPlaces, 
+  isGooglePlacesAvailable, 
+  isNaverLocalAvailable,
+  isKakaoLocalAvailable,
+  isRestaurantWebResearchEnabled,
+} from '@/lib/integrations/env'
 import { generateReviewDigest } from '@/lib/ai/restaurant-research'
-import type { PlaceCandidate, UserReviewInput, ReviewDigest } from '@/types'
+import { mergeCandidatesToCanonical, toNormalizedProfile } from '@/lib/research/canonical-place'
+import { researchRestaurantPlace } from '@/lib/integrations/perplexity'
+import { perplexityResultToEvidence } from '@/lib/research/evidence-aggregator'
+import type { PlaceCandidate, UserReviewInput, ReviewDigest, CanonicalPlace, WebEvidence } from '@/types'
 
 export interface SearchPlacesResult {
   success: boolean
   candidates: PlaceCandidate[]
+  /** Canonical Place 결과 (NEW) */
+  canonicalPlaces?: CanonicalPlace[]
   sources: {
     google: number
     naver: number
+    kakao: number
     mock: number
   }
   warnings: string[]
@@ -37,6 +50,12 @@ export interface GenerateReviewDigestResult {
   digest?: ReviewDigest
   error?: string
   warnings: string[]
+}
+
+export interface ResearchPlaceWithEvidenceResult {
+  success: boolean
+  evidence?: WebEvidence
+  error?: string
 }
 
 /**
@@ -135,8 +154,9 @@ function deduplicateCandidates(candidates: PlaceCandidate[]): PlaceCandidate[] {
 /**
  * Search places from multiple sources
  * 
- * Parallel calls to Google Places + Naver Local
+ * Parallel calls to Naver + Kakao (+ optional Google)
  * Falls back to mock if no API keys or USE_MOCK_PLACES set
+ * Returns both raw candidates and canonical places
  */
 export async function searchPlacesAction(
   query: string,
@@ -150,7 +170,7 @@ export async function searchPlacesAction(
     return {
       success: false,
       candidates: [],
-      sources: { google: 0, naver: 0, mock: 0 },
+      sources: { google: 0, naver: 0, kakao: 0, mock: 0 },
       warnings: [],
       errors: ['검색어를 입력해주세요.'],
       usedFallback: false,
@@ -165,7 +185,7 @@ export async function searchPlacesAction(
     return {
       success: true,
       candidates: mockCandidates,
-      sources: { google: 0, naver: 0, mock: mockCandidates.length },
+      sources: { google: 0, naver: 0, kakao: 0, mock: mockCandidates.length },
       warnings: ['Mock 데이터를 사용 중입니다. 실제 검색을 위해 API 키를 설정하세요.'],
       errors: [],
       usedFallback: true,
@@ -174,21 +194,24 @@ export async function searchPlacesAction(
 
   const searchQuery = region.trim() ? `${region.trim()} ${query.trim()}` : query.trim()
   
+  const kakaoAvailable = isKakaoLocalAvailable()
+  
   console.log('[Search] Starting parallel search:', { 
     query: searchQuery, 
-    googleAvailable: isGooglePlacesAvailable(),
     naverAvailable: isNaverLocalAvailable(),
+    kakaoAvailable,
+    googleAvailable: isGooglePlacesAvailable(),
   })
   
+  // Kakao가 비활성화된 경우 warning 추가 (non-blocking)
+  if (!kakaoAvailable && process.env.RESTAURANT_ENABLE_KAKAO === 'false') {
+    warnings.push('Kakao Local API가 비활성화되어 있습니다. Naver 검색만 사용합니다.')
+  }
+  
   // Parallel API calls with individual error handling
+  // Order: Naver, Kakao (optional), Google
+  // Kakao는 선택사항 - 실패필도 전체 검색을 막지 않음
   const results = await Promise.allSettled([
-    isGooglePlacesAvailable() 
-      ? searchGooglePlaces(searchQuery).catch(err => {
-          console.error('[Search] Google Places failed:', err)
-          errors.push(`Google Places: ${err instanceof Error ? err.message : '알 수 없는 오류'}`)
-          return []
-        })
-      : Promise.resolve([]),
     isNaverLocalAvailable()
       ? searchNaverLocal(searchQuery).catch(err => {
           console.error('[Search] Naver Local failed:', err)
@@ -196,20 +219,43 @@ export async function searchPlacesAction(
           return []
         })
       : Promise.resolve([]),
+    // Kakao는 선택사항 - 비활성화된 경우 호출 생략
+    kakaoAvailable
+      ? searchKakaoLocal(searchQuery).catch(err => {
+          console.error('[Search] Kakao Local failed:', err)
+          // 403 Forbidden은 치명적 에러가 아닌 warning으로 처리
+          if (err instanceof Error && err.message.includes('403')) {
+            warnings.push('Kakao Local API 접근 권한 없음 (403). Naver 검색으로 대체합니다.')
+          } else {
+            errors.push(`Kakao Local: ${err.message}`)
+          }
+          return []
+        })
+      : Promise.resolve([]),
+    isGooglePlacesAvailable() 
+      ? searchGooglePlaces(searchQuery).catch(err => {
+          console.error('[Search] Google Places failed:', err)
+          errors.push(`Google Places: ${err instanceof Error ? err.message : '알 수 없는 오류'}`)
+          return []
+        })
+      : Promise.resolve([]),
   ])
 
-  const googleResults = results[0].status === 'fulfilled' ? results[0].value : []
-  const naverResults = results[1].status === 'fulfilled' ? results[1].value : []
+  const naverResults = results[0].status === 'fulfilled' ? results[0].value : []
+  const kakaoResults = results[1].status === 'fulfilled' ? results[1].value : []
+  const googleResults = results[2].status === 'fulfilled' ? results[2].value : []
   
-  // Check if both failed
-  if (results[0].status === 'rejected' && results[1].status === 'rejected') {
-    console.log('[Search] Both APIs failed, using mock fallback')
+  // Check if all failed
+  const allFailed = results.every(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value.length === 0))
+  
+  if (allFailed) {
+    console.log('[Search] All APIs failed or returned empty, using mock fallback')
     const mockCandidates = await getMockPlaceCandidates(query.trim(), region.trim())
     
     return {
       success: true,
       candidates: mockCandidates,
-      sources: { google: 0, naver: 0, mock: mockCandidates.length },
+      sources: { google: 0, naver: 0, kakao: 0, mock: mockCandidates.length },
       warnings: ['API 호출에 실패하여 Mock 데이터를 표시합니다.'],
       errors,
       usedFallback: true,
@@ -217,32 +263,42 @@ export async function searchPlacesAction(
   }
   
   // Track partial failures
-  if (results[0].status === 'rejected' || googleResults.length === 0 && isGooglePlacesAvailable()) {
-    if (results[0].status === 'rejected') {
-      warnings.push('Google Places API 호출 실패')
+  results.forEach((result, index) => {
+    const name = ['Naver', 'Kakao', 'Google'][index]
+    const isAvailable = [isNaverLocalAvailable(), isKakaoLocalAvailable(), isGooglePlacesAvailable()][index]
+    
+    if (result.status === 'rejected') {
+      warnings.push(`${name} API 호출 실패`)
+    } else if (result.value.length === 0 && isAvailable) {
+      warnings.push(`${name} 검색 결과 없음`)
     }
-  }
-  
-  if (results[1].status === 'rejected' || naverResults.length === 0 && isNaverLocalAvailable()) {
-    if (results[1].status === 'rejected') {
-      warnings.push('Naver Local API 호출 실패')
-    }
-  }
+  })
 
-  // Merge and deduplicate
-  const allCandidates = [...googleResults, ...naverResults]
+  // Merge all candidates
+  const allCandidates = [...naverResults, ...kakaoResults, ...googleResults]
+  
+  // Legacy dedupe (for backward compatibility)
   const deduplicated = deduplicateCandidates(allCandidates)
   
-  // Sort by source priority: google > naver > manual
-  const sourcePriority = { google_places_api: 1, naver_local_api: 2, manual: 3 }
+  // NEW: Canonical Place 병합
+  const { places: canonicalPlaces } = mergeCandidatesToCanonical(allCandidates)
+  
+  // Sort by source priority: naver > kakao > google > manual
+  const sourcePriority: Record<string, number> = { 
+    naver_local_api: 1, 
+    kakao_local_api: 2,
+    google_places_api: 3, 
+    manual: 4 
+  }
   deduplicated.sort((a, b) => {
     return (sourcePriority[a.source] || 9) - (sourcePriority[b.source] || 9)
   })
 
   console.log('[Search] Results summary:', {
-    google: googleResults.length,
     naver: naverResults.length,
-    final: deduplicated.length,
+    kakao: kakaoResults.length,
+    google: googleResults.length,
+    canonical: canonicalPlaces.length,
     warnings: warnings.length,
     errors: errors.length,
   })
@@ -252,7 +308,7 @@ export async function searchPlacesAction(
     return {
       success: true,
       candidates: [],
-      sources: { google: 0, naver: 0, mock: 0 },
+      sources: { google: 0, naver: 0, kakao: 0, mock: 0 },
       warnings: [...warnings, '검색 결과가 없습니다. 다른 검색어를 시도해보세요.'],
       errors,
       usedFallback: false,
@@ -262,14 +318,72 @@ export async function searchPlacesAction(
   return {
     success: true,
     candidates: deduplicated,
+    canonicalPlaces,
     sources: {
       google: googleResults.length,
       naver: naverResults.length,
+      kakao: kakaoResults.length,
       mock: 0,
     },
     warnings,
     errors,
     usedFallback: false,
+  }
+}
+
+/**
+ * Research a specific restaurant place using Perplexity
+ * Optional enhancement - failures are non-blocking
+ */
+export async function researchRestaurantPlaceAction(
+  projectId: string,
+  placeName: string,
+  region?: string,
+  category?: string
+): Promise<ResearchPlaceWithEvidenceResult> {
+  console.log('[Research Action] Starting web research:', {
+    projectId,
+    placeName,
+    region,
+  })
+  
+  // Check if web research is enabled
+  if (!isRestaurantWebResearchEnabled()) {
+    console.log('[Research Action] Web research disabled or Perplexity not available')
+    return {
+      success: false,
+      error: 'Web research not enabled',
+    }
+  }
+  
+  try {
+    const researchResult = await researchRestaurantPlace({
+      placeName,
+      region,
+      category,
+    })
+    
+    // Convert to Evidence
+    const evidence = perplexityResultToEvidence(researchResult, placeName)
+    
+    console.log('[Research Action] Successfully generated evidence:', {
+      projectId,
+      evidenceId: evidence.id,
+      confidence: evidence.confidence,
+    })
+    
+    return {
+      success: true,
+      evidence,
+    }
+    
+  } catch (error) {
+    console.error('[Research Action] Web research failed:', error)
+    
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '웹 조사 중 오류가 발생했습니다.',
+    }
   }
 }
 

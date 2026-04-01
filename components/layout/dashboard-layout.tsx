@@ -1,16 +1,29 @@
 /**
- * Main Dashboard Layout - HubSpot Enterprise Style
+ * Dashboard Layout - Shared Component
  * 
- * Layout Structure:
- * - Dark Sidebar (64px compact or 256px expanded)
- * - Dark Topbar (page title + search + utilities)
- * - Light Content Canvas (workspace area)
+ * HubSpot Enterprise Style Dashboard Shell
+ * - Dark Sidebar (256px fixed)
+ * - Dark Topbar
+ * - Light Content Canvas
+ * 
+ * Usage:
+ * ```tsx
+ * import { DashboardLayout } from "@/components/layout/dashboard-layout";
+ * 
+ * export default function Page() {
+ *   return (
+ *     <DashboardLayout>
+ *       <YourContent />
+ *     </DashboardLayout>
+ *   );
+ * }
+ * ```
  */
 
 import { SideNav } from "@/components/layout/side-nav";
 import { TopAppBar } from "@/components/layout/top-app-bar";
 
-export default function DashboardLayout({
+export function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
