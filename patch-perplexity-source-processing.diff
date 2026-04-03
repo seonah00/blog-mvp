@@ -1,0 +1,138 @@
+diff --git a/app/actions/perplexity-research.ts b/app/actions/perplexity-research.ts
+index 1234567..abcdefg 100644
+--- a/app/actions/perplexity-research.ts
++++ b/app/actions/perplexity-research.ts
+@@ -80,20 +80,54 @@ export async function researchWithPerplexityAction(
+       recencyDays: 365, // 최근 1년 내 자료
+     })
+ 
++    // 검색 결과 가공: 중복 제거 및 핵심 주장 추출
++    const processedResults = searchResult.results.map((result, index) => {
++      // snippet에서 핵심 문장만 추출 ( bullet이나 나열형 제거 )
++      const cleanSnippet = cleanAndExtractKeySentences(result.snippet || '')
++      
++      return {
++        ...result,
++        processedSnippet: cleanSnippet,
++      }
++    })
++
++    // 중복 URL 제거
++    const uniqueResults = processedResults.filter((result, index, self) => 
++      index === self.findIndex(r => r.url === result.url)
++    )
++
++    // 종합 요약 생성 (answer가 있으면 활용)
++    const synthesizedSummary = searchResult.answer 
++      ? synthesizeKeyFindings(searchResult.answer, uniqueResults)
++      : uniqueResults[0]?.processedSnippet || ''
++
+     // 검색 결과를 SourceDocument로 변환
+     const now = new Date().toISOString()
+-    const sources: SourceDocument[] = searchResult.results.map((result, index) => {
++    const sources: SourceDocument[] = uniqueResults.map((result, index) => {
++      // 핵심 포인트 추출 (processedSnippet 기반)
++      const keyPoints = extractKeyPoints(result.processedSnippet)
++      
++      // 제목 정제 (클릭베이트 제거)
++      const cleanTitle = cleanTitleText(result.title || `${query} - 검색 결과 ${index + 1}`)
++      
+       return {
+         id: createId('source'),
+         sourceId: createId('source'),
+         projectId: input.projectId,
+         type: sourceType,
+-        title: result.title || `${query} - 검색 결과 ${index + 1}`,
++        title: cleanTitle,
+         url: result.url,
+-        content: result.snippet || '',
+-        summary: result.snippet || '',
+-        keyPoints: extractKeyPoints(result.snippet || ''),
++        content: result.processedSnippet,
++        summary: index === 0 ? synthesizedSummary : result.processedSnippet.slice(0, 200) + '...',
++        keyPoints: keyPoints.slice(0, 5), // 최대 5개만
+         relevance: 0.8 - (index * 0.1),
+         citations: [result.url],
+         processedAt: now,
+@@ -103,13 +137,6 @@ export async function researchWithPerplexityAction(
+       }
+     })
+ 
+-    // 검색 결과 요약이 있으면 첫 번째 소스에 추가
+-    if (searchResult.answer && sources.length > 0) {
+-      sources[0].summary = searchResult.answer
+-      sources[0].keyPoints = [
+-        ...sources[0].keyPoints,
+-        ...extractKeyPoints(searchResult.answer),
+-      ].slice(0, 5)
+-    }
+ 
+     return {
+       success: true,
+@@ -286,6 +313,61 @@ function extractKeyPoints(text: string): string[] {
+     }
+   }
+ 
++  // 중복 제거 (유사한 내용 필터링)
++  const uniquePoints: string[] = []
++  for (const point of points) {
++    const isDuplicate = uniquePoints.some(existing => 
++      existing.slice(0, 30) === point.slice(0, 30) || // 앞 30자 중복
++      existing.includes(point) || 
++      point.includes(existing)
++    )
++    if (!isDuplicate) {
++      uniquePoints.push(point)
++    }
++  }
++
++  return uniquePoints.slice(0, 5)
++}
++
++/**
++ * 텍스트 정제 및 핵심 문장 추출
++ */
++function cleanAndExtractKeySentences(text: string): string {
++  if (!text || text.length < 20) return text
++  
++  // bullet point나 번호 제거
++  let cleaned = text
++    .replace(/^[\s]*[-•·\d]+[.)]?\s*/gm, '') // bullet과 숫자 제거
++    .replace(/\n\s*\n/g, ' ') // 빈 줄 제거
++    .replace(/\s+/g, ' ') // 다중 공백 제거
++    .trim()
++  
++  // 너무 길면 첫 2-3문장만 사용
++  const sentences = cleaned.split(/(?<=[.!?])\s+/)
++  if (sentences.length > 3) {
++    return sentences.slice(0, 3).join(' ')
++  }
++  
++  return cleaned
++}
++
++/**
++ * 제목 정제 (클릭베이트 제거)
++ */
++function cleanTitleText(title: string): string {
++  return title
++    .replace(/\s*\|\s*.*$/, '') // 사이트명 제거 (예: "... | Wikipedia")
++    .replace(/\s*-\s*.*$/, '')  // 사이트명 제거 (예: "... - Naver Blog")
++    .replace(/^(\d+\.\s*)+/, '') // 번호 제거
++    .trim()
++}
++
++/**
++ * 핵심 발견 사항 종합
++ */
++function synthesizeKeyFindings(answer: string, results: { processedSnippet: string }[]): string {
++  // answer가 있으면 사용, 없으면 첫 결과의 processedSnippet 사용
++  const baseText = answer || results[0]?.processedSnippet || ''
++  
++  // bullet point 제거하고 문단 형태로
++  return cleanAndExtractKeySentences(baseText)
++}
++
+   return points.slice(0, 5)
+ }
+ 

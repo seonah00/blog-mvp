@@ -1,0 +1,58 @@
+diff --git a/app/projects/[id]/draft/edit/page.tsx b/app/projects/[id]/draft/edit/page.tsx
+index 1234567..abcdefg 100644
+--- a/app/projects/[id]/draft/edit/page.tsx
++++ b/app/projects/[id]/draft/edit/page.tsx
+@@ -338,10 +338,50 @@ export default function DraftEditPage() {
+   if (!draft) {
+     return (
+       <div className="flex items-center justify-center h-64">
+-        <div className="flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
+-          <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+-          <span className="text-sm">초안 생성 중...</span>
++        <div className="flex flex-col items-center gap-4 max-w-md w-full px-6">
++          {/* Animated Spinner */}
++          <div className="relative">
++            <div className="animate-spin h-10 w-10 border-3 border-blue-200 border-t-blue-600 rounded-full" />
++            <div className="absolute inset-0 animate-ping h-10 w-10 border-2 border-blue-400 rounded-full opacity-20" />
++          </div>
++          
++          {/* Progress Text */}
++          <div className="text-center space-y-2">
++            <p className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
++              글 작성 중...
++            </p>
++            <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
++              AI가 리서치 데이터를 바탕으로 자연스러운 블로그 글을 작성하고 있어요.<br />
++              30초~1분 정도 소요될 수 있어요.
++            </p>
++          </div>
++          
++          {/* Skeleton Preview */}
++          <div className="w-full mt-4 space-y-3 opacity-60">
++            <div className="h-4 bg-gray-200 rounded w-3/4 animate-pulse" />
++            <div className="h-4 bg-gray-200 rounded w-full animate-pulse" />
++            <div className="h-4 bg-gray-200 rounded w-5/6 animate-pulse" />
++            <div className="h-4 bg-gray-200 rounded w-full animate-pulse" />
++            <div className="space-y-2 pt-2">
++              <div className="h-3 bg-gray-200 rounded w-full animate-pulse" />
++              <div className="h-3 bg-gray-200 rounded w-11/12 animate-pulse" />
++              <div className="h-3 bg-gray-200 rounded w-4/5 animate-pulse" />
++            </div>
++            <div className="space-y-2 pt-2">
++              <div className="h-3 bg-gray-200 rounded w-full animate-pulse" />
++              <div className="h-3 bg-gray-200 rounded w-5/6 animate-pulse" />
++              <div className="h-3 bg-gray-200 rounded w-full animate-pulse" />
++            </div>
++          </div>
++          
++          {/* Tips */}
++          <div 
++            className="mt-4 p-3 rounded-lg text-xs text-center w-full"
++            style={{ backgroundColor: 'var(--workspace-secondary)', color: 'var(--text-secondary)' }}
++          >
++            💡 <strong>팁:</strong> 완성된 글은 에디터에서 바로 수정할 수 있어요.<br />
++            소제목, 문장 연결, 예시 등을 자유롭게 편집핳세요.
++          </div>
+         </div>
+       </div>
+     )

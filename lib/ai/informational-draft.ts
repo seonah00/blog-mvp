@@ -12,6 +12,7 @@
 
 import { generateAiObject, generateWithPurpose, type GenerateAiObjectResult } from './client'
 import { isAIProviderAvailable } from '@/lib/integrations/env'
+import { applyContentFilter, logFilterResult } from './content-filter'
 import type { 
   InformationalAssistantMessage, 
   InformationalOutline,
@@ -280,6 +281,26 @@ function buildSystemPrompt(
 - 특정 방법이 모두에게 동일하게 효과적이라고 단정 금지
 ${domainRule}
 
+**가장 중요한 작성 규칙 (반드시 준수):**
+1. **절대 나열 금지**: 소스의 내용을 bullet point나 목록 형태로 그대로 붙여넣지 마세요.
+2. **완성된 블로그 글**: 독자가 읽기 편한, 자연스럽게 이어지는 하나의 글을 작성하세요.
+3. **재서술 의무**: 모든 정보는 원문을 인용하지 않고, 작가가 직접 설명하듯이 다시 써야 합니다.
+4. **구조 준수**:
+   - 서론: 100-150자, 일상생활 사례로 독자의 흥미 유발
+   - 본론: 5개 소제목, 각론형으로 구체적 사례와 설명
+   - 결론: 앞 내용 정리 + 독자에게 도움되는 마무리 멘트
+5. **키워드 배분** (자연스럽게):
+   - 메인 키워드: 본문에서 6회 반복
+   - 서브 키워드: 각각 3-4회 반복
+   - 나머지는 대체어로 표현
+6. **문장 연결**: 문단 간 자연스러운 전환, 사례와 설명의 균형
+7. **독자 친화**: 어려운 용어는 쉽게 풀어 설명, "~입니다" 체 사용
+
+**글 톤 및 스타일:**
+- 전문적이면서도 친근한 어투
+- 말하듯이 자연스럽게 작성
+- AI가 쓴 것처럼 보이는 기계적 표현 금지 ("첫째, 둘째", "결론적으로" 등)
+
 **작성 원칙:**
 1. 제공된 데이터만 사용 - 없는 정보는 꾸며내지 않기
 2. 과장 표현 금지 - "무조건", "최고", "완벽" 등의 표현 사용 금지
@@ -315,10 +336,10 @@ function buildUserPrompt(
   const { meta, outline, sources, settings, projectTitle, projectTopic } = input
 
   const styleGuide = {
-    explainer: '설명형: 개념과 원리를 명확하게 설명',
-    comparison: '비교형: 여러 옵션을 객관적으로 비교',
-    guide: '가이드형: 단계별 방법을 상세히 안내',
-    'problem-solving': '해결형: 문제 해결책을 제시',
+    explainer: '설명형: 개념과 원리를 명확하게 설명하되, 독자가 공감할 수 있는 예시 포함',
+    comparison: '비교형: 여러 옵션을 객관적으로 비교하되, 장단점을 구체적 사례로 설명',
+    guide: '가이드형: 단계별 방법을 상세히 안내하되, 실제 적용 사례를 함께 제시',
+    'problem-solving': '해결형: 문제 해결책을 제시하되, 독자의 상황을 고려한 조언 포함',
   }
 
   // 도메인 감지
@@ -350,22 +371,37 @@ function buildUserPrompt(
 [프로젝트 정보]
 제목: ${projectTitle}
 주제: ${projectTopic}
-메인 키워드: ${meta.mainKeyword}
-서브 키워드: ${meta.subKeywords.join(', ')}
+메인 키워드: ${meta.mainKeyword} (본문에서 6회 자연스럽게 반복)
+서브 키워드: ${meta.subKeywords.join(', ')} (각각 3-4회 자연스럽게 반복)
 검색 의도: ${meta.searchIntent}
 독자층: ${meta.audienceLevel}
 글 목표: ${meta.goal}
 감지된 도메인: ${detectedDomain}
 
-[아웃라인]
-글 제목: ${outline.title}
+[글 구조 지침]
+1. 서론 (100-150자):
+   - 일상생활에서 일어날 수 있는 사례 제시
+   - 독자의 흥미를 유발하는 도입
+   - ${meta.mainKeyword}와 관련된 공감대 형성
+
+2. 본론 (5개 소제목):
+   - 각 소제목은 구체적인 사례와 설명 포함
+   - ${styleGuide[settings.style]}
+   - 문단 간 자연스러운 연결
+
+3. 결론:
+   - 앞서 다룬 내용을 한 번 더 정리
+   - 독자가 이해하기 쉽게 요약
+   - 도움이 되는 마무리 멘트
+
+[아웃라인 참고]
+제안 제목: ${outline.title}
 타겟 독자: ${outline.targetAudience || '일반'}
 
 섹션 구성:
 ${outline.sections.map((s, i) => `
-${i + 1}. ${s.heading}
-   - 핵심 포인트: ${s.keyPoints.join(', ')}
-   - 예상 분량: ${s.estimatedWordCount || 200}자
+- 소제목 ${i + 1}: ${s.heading}
+  * 다룰 내용: ${s.keyPoints.slice(0, 2).join(', ')}
 `).join('')}
 
 [소스 문서]
@@ -377,17 +413,17 @@ FAQ 포함: ${settings.includeFaq ? '예' : '아니오'}
 체크리스트 포함: ${settings.includeChecklist ? '예' : '아니오'}
 
 제목 작성 가이드라인:
-1. 아웃라인의 핵심 포인트와 소스 내용을 바탕으로 기억에 남는 제목을 작성해주세요.
-2. 포함할 키워드: ${meta.mainKeyword}, ${meta.subKeywords.slice(0, 2).join(', ')}
+1. 아웃라인의 핵심 포인트를 바탕으로 기억에 남는 제목을 작성해주세요.
+2. 필수 키워드: ${meta.mainKeyword}, ${meta.subKeywords.slice(0, 2).join(', ')}
 3. 자연스러운 느낌의 문장 및 조사를 회피하고 명확하게 만들어주세요.
 4. 독자의 호기심을 자극하되 클릭베이트는 피해주세요.
 
-본문 작성 지침:
-1. 아웃라인의 각 섹션을 충실히 반영
-2. 소스 문서의 핵심 포인트를 녹여내기
-3. 설정된 스타일과 톤 유지
-4. ${settings.includeFaq ? '글 마무리에 FAQ 섹션 포함' : ''}
-${settings.includeChecklist ? '5. 필요한 경우 체크리스트 형식 활용' : ''}
+[작성 시 주의사항]
+- 소스의 내용을 그대로 복사하지 말고, 작가가 직접 설명하듯이 재서술하세요.
+- "첫째, 둘째, 셋째" 같은 기계적 나열은 금지합니다. 자연스러운 문단 전환을 사용하세요.
+- 1800자 이상으로 작성하되, filler 없이 충실한 내용으로 채우세요.
+${settings.includeFaq ? '- 글 마무리에 FAQ 섹션 포함' : ''}
+${settings.includeChecklist ? '- 필요한 경우 체크리스트 형식 활용' : ''}
 
 ${detectedDomain !== 'general' ? `⚠️ [${detectedDomain} 도메인 주의사항]
 - 민감 도메인으로 판단됩니다. 보수적으로 작성해주세요.
@@ -590,7 +626,20 @@ export async function generateInformationalDraft(
       wordCount: result.data.metadata?.wordCount,
       provider: result.provider,
     })
-    return { ...result.data, usedFallback: false }
+    
+    // 금지어 검사 및 자동 수정
+    const filtered = applyContentFilter(result.data)
+    logFilterResult(filtered.filterResult)
+    
+    return {
+      title: filtered.title,
+      content: filtered.content,
+      sections: filtered.sections,
+      faq: filtered.faq,
+      keywordsUsed: filtered.keywordsUsed,
+      metadata: filtered.metadata,
+      usedFallback: false,
+    }
   }
 
   // 실패 시 fallback
@@ -599,7 +648,21 @@ export async function generateInformationalDraft(
     message: result.error?.message,
   })
 
-  return generateDeterministicDraft(input)
+  const fallbackResult = generateDeterministicDraft(input)
+  
+  // fallback 결과도 금지어 검사
+  const filteredFallback = applyContentFilter(fallbackResult)
+  logFilterResult(filteredFallback.filterResult)
+  
+  return {
+    title: filteredFallback.title,
+    content: filteredFallback.content,
+    sections: filteredFallback.sections,
+    faq: filteredFallback.faq,
+    keywordsUsed: filteredFallback.keywordsUsed,
+    metadata: filteredFallback.metadata,
+    usedFallback: true,
+  }
 }
 
 // ============================================
