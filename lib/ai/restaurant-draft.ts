@@ -12,12 +12,11 @@
 import { generateAiObject } from './client'
 import {
   RestaurantDraftOutputSchema,
-  RestaurantDraftInputSchema,
-  createMockRestaurantDraftOutput,
   type RestaurantDraftOutput,
-  type RestaurantDraftInput,
 } from './schemas/restaurant-draft'
 import { isAIProviderAvailable } from '@/lib/integrations/env'
+import { applyQualityFilter, logQualityResult } from './quality-filter'
+import { validateAndFixContent, logFilterResult } from './content-filter'
 import type {
   RestaurantAssistantMessage,
   ParagraphDraft,
@@ -27,6 +26,12 @@ import type {
   CanonicalPlace,
   WebEvidence,
 } from '@/types'
+
+// Pipeline integration
+import {
+  runRestaurantPipeline,
+  type RestaurantPipelineInput as PipelineInput,
+} from './pipeline'
 
 export interface DraftGenerationInput {
   placeProfile: {
@@ -72,21 +77,23 @@ export interface GenerateRestaurantDraftInput {
 function buildSystemPrompt(): string {
   return `당신은 맛집 블로그 글을 작성하는 전문 작가입니다.
 
-**역할:**
-- 제공된 리서치 데이터(매장 정보, 리뷰 요약)만을 사용하여 글을 작성합니다.
-- 외부 검색이나 추가 정보 수집은 하지 않습니다.
-- 제공되지 않은 정보(정확한 가격, 영업시간 등)는 추측하지 않습니다.
+**가장 중요한 작성 규칙 (반드시 준수):**
+1. **템플릿 마커 절대 금지**: "---", "**기본 정보**", "📍" (주소 없이), "📞" (전화번호 없이) 등의 마커는 절대 사용하지 마세요.
+2. **메모투 문장 금지**: "관련 자료를 본면", "리뷰를 본면", "이 내용을 녹이면" 등의 메타 문장은 절대 사용하지 마세요.
+3. **완성된 블로그 글**: 독자가 읽기 편한, 자연스럽게 이어지는 하나의 글을 작성하세요. 작성 과정이나 메모가 보이면 안 됩니다.
+4. **자연스러운 톤**: AI가 쓴 것처럼 보이지 않게 인간적인 표현 사용
+5. **과장 표현 금지**: "무조건", "최고", "맛집 인증", "줄 서서라도 꼭", "추천", "보장" 등의 표현 사용 금지
+6. **주소/정보 반복 금지**: 같은 주소나 기본 정보를 여러 번 반복하지 마세요. 한 번만 자연스럽게 언급하세요.
 
 **작성 원칙:**
 1. 제공된 데이터만 사용 - 없는 정보는 꾸며내지 않기
-2. 과장 표현 금지 - "무조건", "최고", "맛집 인증", "줄 서서라도 꼭" 등의 표현 사용 금지
-3. 자연스러운 톤 - AI가 쓴 것처럼 보이지 않게 인간적인 표현 사용
-4. 구조화된 내용 - 제목, 도입, 본론(선택한 포인트별), 마무리로 구성
+2. 자연스러운 톤 - 방문한 사람의 실제 경험을 바탕으로 작성
+3. 구조화된 내용 - 제목, 도입, 본론(선택한 포인트별), 마무리로 구성
 
 **출력 형식:**
 JSON 형식으로 다음 필드를 포함하여 응답:
-- title: 글 제목 (50자 이내)
-- content: 전체 내용 (마크다운 형식)
+- title: 글 제목 (24~42자 권장, 매장명 자연스럽게 포함)
+- content: 전체 내용 (마크다운 형식, 템플릿 마커 없이)
 - sections: 섹션별 구분 (heading, content)
 - recommendedImages: 추천 이미지 설명 (최대 10개)
 - hashtags: 해시태그 목록 (최대 15개, # 접두사 포함)
@@ -95,7 +102,8 @@ JSON 형식으로 다음 필드를 포함하여 응답:
 **주의사항:**
 - 리뷰 인용구는 원문을 정확히 인용하되, 맥락을 왜곡하지 마세요.
 - 메뉴 설명은 "~했다", "~였다" 등 체험형 표현을 사용하세요.
-- 방문객의 실제 후기를 바탕으로 작성하세요.`
+- 방문객의 실제 후기를 바탕으로 작성하세요.
+- **---, **기본 정보**, 내용을 입력하세요 등의 템플릿 문자열은 절대 포함하지 마세요.**`
 }
 
 /**
@@ -105,7 +113,7 @@ function buildUserPrompt(input: GenerateRestaurantDraftInput): string {
   const { placeProfile, reviewDigest, settings, projectTitle, projectTopic } = input
 
   const channelGuide = {
-    blog: '블로그 포스트 형식: 전체 구조(도입-본론-결론), 800-2000자, 기본 정보 섹션 포함',
+    blog: '블로그 포스트 형식: 전체 구조(도입-본론-결론), 800-2000자, 기본 정보는 자연스러운 문장으로 한 번만 언급',
     threads: '스레드 형식: 짧고 임팩트 있는 내용, 400-800자, 해시태그 중심',
     daangn: '당근마켓 형식: 간결한 정보 중심, 200-500자, 가격/위치 강조',
   }
@@ -119,17 +127,22 @@ function buildUserPrompt(input: GenerateRestaurantDraftInput): string {
   const focusGuide: Record<string, string> = {
     menu: '메뉴: 대표 메뉴 설명, 맛 평가, 가격대 언급',
     atmosphere: '분위기: 인테리어, 조명, 전체적인 느낌',
-    location: '위치: 주소, 주변 환경, 접근성',
+    location: '위치: 주소는 자연스러운 문장으로 한 번만 언급, 주변 환경, 접근성',
     price: '가격: 가성비, 가격대, 할인 정보',
     waiting: '웨이팅: 대기 시간, 예약 필요 여부, 붐비는 시간대',
     parking: '주차: 주차장 여부, 발렛, 대중교통',
   }
 
+  // 리뷰 인용구 정제 (메모투 제거)
+  const cleanQuotes = reviewDigest.quotes
+    .slice(0, 2)
+    .map(q => q.replace(/^(리뷰|후기|방문객)\s*[:\-]?\s*/gi, ''))
+
   return `[매장 정보]
 - 이름: ${placeProfile.name}
 - 카테고리: ${placeProfile.category}
-- 주소: ${placeProfile.address}
-${placeProfile.phone ? `- 전화번호: ${placeProfile.phone}` : ''}
+- 주소: ${placeProfile.address} (본문에서 한 번만 자연스럽게 언급)
+${placeProfile.phone ? `- 전화번호: ${placeProfile.phone} (필요시 한 번만 언급)` : ''}
 ${placeProfile.hours ? `- 영업시간: ${placeProfile.hours.join(', ')}` : ''}
 
 [리뷰 요약]
@@ -137,7 +150,8 @@ ${placeProfile.hours ? `- 영업시간: ${placeProfile.hours.join(', ')}` : ''}
 - 감성: ${reviewDigest.sentiment}
 - 핵심 포인트:
 ${reviewDigest.highlights.map(h => `  • ${h}`).join('\n')}
-${reviewDigest.quotes.length > 0 ? `- 인용구:\n${reviewDigest.quotes.map(q => `  • ${q}`).join('\n')}` : ''}
+${cleanQuotes.length > 0 ? `- 인용구:
+${cleanQuotes.map(q => `  • "${q}"`).join('\n')}` : ''}
 
 [프로젝트 정보]
 - 제목: ${projectTitle}
@@ -148,15 +162,30 @@ ${reviewDigest.quotes.length > 0 ? `- 인용구:\n${reviewDigest.quotes.map(q =>
 - 톤: ${settings.tone} (${toneGuide[settings.tone]})
 - 강조 포인트: ${settings.focusPoints.map(p => `${p}(${focusGuide[p]})`).join(', ')}
 
-[추가 지시사항]
+[매우 중요한 작성 규칙]
+1. "---", "**기본 정보**", "📍" (주소 없이), "📞" (전화번호 없이) 등의 템플릿 마커는 절대 사용하지 마세요.
+2. "내용을 입력하세요", "TODO", "FIXME" 등의 placeholder는 절대 사용하지 마세요.
+3. "관련 자료를 본면", "리뷰를 본면", "이 내용을 녹이면" 등 메모투 문장은 절대 사용하지 마세요.
+4. 주소는 본문에서 한 번만 자연스러운 문장으로 언급하세요. 반복하지 마세요.
+5. "에서 즐거운 식사 되세요!" 같은 템플릿 문구는 사용하지 마세요.
+6. 완성된 블로그 글 형식으로 작성하세요. 메모나 지시문이 보이면 안 됩니다.
+
+[제목 작성 규칙]
+1. 매장명 "${placeProfile.name}"을 자연스럽게 포함하세요.
+2. 24~42자 내외로 작성하세요.
+3. "완벽", "최고", "추천", "보장", "총정리", "필수" 등의 과장 표현은 피하세요.
+4. 예시) ❌ "${placeProfile.name} 완벽 가이드" → ✅ "${placeProfile.name}, ${placeProfile.category} 맛집으로 손꼽히는 이유"
+
+[주의사항]
 1. 위 데이터만 사용하여 글을 작성하세요.
 2. 과장된 표현 없이 방문객의 실제 경험을 바탕으로 작성하세요.
 3. ${settings.channel} 채널에 맞는 형식과 길이를 준수하세요.
-4. JSON 형식으로만 응답하세요.`
+4. JSON 형식으로만 응답하세요.
+5. 템플릿 마커(---, **기본 정보** 등)는 절대 포함하지 마세요.`
 }
 
 /**
- * Deterministic Fallback Draft Generation
+ * Deterministic Fallback Draft Generation (템플릿 누수 수정)
  * AI 호출 실패 시 사용
  */
 function generateDeterministicDraft(
@@ -177,7 +206,7 @@ function generateDeterministicDraft(
       menu: {
         title: '대표 메뉴',
         content: `${placeProfile.name}의 시그니처 메뉴는 리뷰에서 꾸준히 호평받는 부분이에요. ` +
-                 `${reviewDigest.highlights.find(h => h.includes('메뉴') || h.includes('맛')) || '음식의 퀄리티가 좋아요.'}`,
+                 `${reviewDigest.highlights.find(h => h.includes('메뉴') || h.includes('맛')) || '음식의 퀄리티가 좋았어요.'}`,
       },
       atmosphere: {
         title: '분위기',
@@ -187,8 +216,8 @@ function generateDeterministicDraft(
       },
       location: {
         title: '위치와 접근성',
-        content: `${placeProfile.address}에 위치하고 있어 찾아가기 편리해요. ` +
-                 `주변 교통도 편리한 편이에요.`,
+        content: `${placeProfile.address}에 위치한 ${placeProfile.name}는 찾아가기 편리해요. ` +
+                 `주변 교통도 편리한 편이라 방문하시기 좋습니다.`,
       },
       price: {
         title: '가격대',
@@ -198,20 +227,20 @@ function generateDeterministicDraft(
       waiting: {
         title: '웨이팅 정보',
         content: `${reviewDigest.highlights.find(h => h.includes('웨이팅') || h.includes('대기')) 
-          ? '피크타임에는 웨이팅이 있을 수 있어요.' 
+          ? '피크타임에는 웨이팅이 있을 수 있어요. 방문 전 예약을 권장합니다.' 
           : '평일에는 비교적 여유롭게 이용할 수 있어요.'}`,
       },
       parking: {
         title: '주차 정보',
-        content: `주차 공간이 ${reviewDigest.highlights.find(h => h.includes('주차')) 
-          ? '마련되어 있어 차량 방문도 가능해요.' 
-          : '제한적이니 대중교통 이용을 권장해요.'}`,
+        content: `${reviewDigest.highlights.find(h => h.includes('주차')) 
+          ? '주차 공간이 마련되어 있어 차량 방문도 가능해요.' 
+          : '주차 공간이 제한적이니 대중교통 이용을 권장해요.'}`,
       },
     }
     return sectionMap[point] || { title: point, content: '' }
   }).filter(s => s.content)
 
-  // 콘텐츠 조립
+  // 콘텐츠 조립 (템플릿 마커 제거)
   let content = ''
 
   if (settings.channel === 'blog') {
@@ -224,11 +253,13 @@ function generateDeterministicDraft(
     if (reviewDigest.quotes.length > 0) {
       parts.push(`## 방문객 후기\n`)
       reviewDigest.quotes.slice(0, 2).forEach(quote => {
-        parts.push(`> ${quote}\n`)
+        const cleanQuote = quote.replace(/^(리뷰|후기|방문객)\s*[:\-]?\s*/gi, '')
+        parts.push(`> "${cleanQuote}"\n`)
       })
     }
 
-    parts.push(`---\n**기본 정보**\n📍 ${placeProfile.address}${placeProfile.phone ? ` | 📞 ${placeProfile.phone}` : ''}\n\n${placeProfile.name}에서 즐거운 식사 되세요!`)
+    // 템플릿 마커 제거, 자연스러운 마무리
+    parts.push(`\n${placeProfile.name}에서 좋은 시간 보내시길 바랍니다.`)
 
     content = parts.join('\n')
   } else if (settings.channel === 'threads') {
@@ -287,23 +318,93 @@ function generateDeterministicDraft(
  * @param input 초안 생성 입력 데이터
  * @returns 생성된 초안 (AI 또는 fallback)
  */
+/**
+ * Main: Generate Restaurant Draft (8단계 Pipeline)
+ */
 export async function generateRestaurantDraft(
-  input: GenerateRestaurantDraftInput
+  input: GenerateRestaurantDraftInput,
+  onProgress?: (status: { stage: string; progress: number; message: string }) => void
 ): Promise<RestaurantDraftOutput> {
-  console.log('[Restaurant Draft] Starting generation:', {
+  console.log('[Restaurant Draft] Starting 8-stage pipeline:', {
     place: input.placeProfile.name,
     channel: input.settings.channel,
-    provider: isAIProviderAvailable() ? 'ai' : 'fallback',
   })
 
-  // AI Provider가 설정되지 않은 경우 즉시 fallback
-  if (!isAIProviderAvailable()) {
-    console.log('[Restaurant Draft] AI provider not available, using deterministic fallback')
-    const fallbackResult = generateDeterministicDraft(input)
-    return { ...fallbackResult, usedFallback: true }
+  // Pipeline 기반 생성 (8단계)
+  const pipelineInput: PipelineInput = {
+    projectId: input.projectTitle || input.placeProfile.name,
+    placeProfile: input.placeProfile,
+    reviewDigest: input.reviewDigest,
+    settings: input.settings,
+    webEvidence: input.webEvidence?.map(e => ({
+      url: e.citations?.[0] || '',
+      title: e.placeName || '',
+      snippet: e.summary || '',
+      relevance: 0.5,
+    })),
   }
 
-  // AI 호출 시도
+  const result = await runRestaurantPipeline(
+    pipelineInput,
+    (status) => {
+      onProgress?.({
+        stage: status.currentStage,
+        progress: status.overallProgress,
+        message: status.stageMessage,
+      })
+    }
+  )
+
+  if (result.success && result.draft) {
+    console.log('[Restaurant Draft] Pipeline completed successfully')
+    return {
+      title: result.draft.title,
+      content: result.draft.content,
+      sections: result.draft.sections.map(s => ({
+        heading: s.heading,
+        content: s.content,
+      })),
+      recommendedImages: [],
+      hashtags: [],
+      metadata: {
+        wordCount: result.draft.metadata.wordCount,
+        estimatedReadTime: result.draft.metadata.estimatedReadTime,
+        tone: input.settings.tone,
+      },
+      usedFallback: false,
+    }
+  }
+
+  // Pipeline 실패 시 기존 방식으로 fallback
+  console.warn('[Restaurant Draft] Pipeline failed, using legacy:', result.error)
+  return generateLegacyRestaurantDraft(input)
+}
+
+/**
+ * Legacy Restaurant Draft Generation (Fallback)
+ */
+async function generateLegacyRestaurantDraft(
+  input: GenerateRestaurantDraftInput
+): Promise<RestaurantDraftOutput> {
+  console.log('[Restaurant Draft] Using legacy generation')
+
+  if (!isAIProviderAvailable()) {
+    const fallbackResult = generateDeterministicDraft(input)
+    const contentFilterResult = validateAndFixContent(fallbackResult.content)
+    const qualityResult = applyQualityFilter(contentFilterResult.fixedContent)
+    
+    return {
+      ...fallbackResult,
+      content: qualityResult.fixedContent,
+      sections: fallbackResult.sections?.map(s => {
+        const sectionFiltered = validateAndFixContent(s.content)
+        const sectionQuality = applyQualityFilter(sectionFiltered.fixedContent)
+        return { ...s, content: sectionQuality.fixedContent }
+      }),
+      usedFallback: true,
+    }
+  }
+
   const result = await generateAiObject({
     systemPrompt: buildSystemPrompt(),
     userPrompt: buildUserPrompt(input),
@@ -312,23 +413,36 @@ export async function generateRestaurantDraft(
     maxTokens: 3000,
   })
 
-  // 성공 시 AI 결과 반환
   if (result.ok && result.data) {
-    console.log('[Restaurant Draft] AI generation successful:', {
-      title: result.data.title,
-      wordCount: result.data.metadata?.wordCount,
-    })
-    return { ...result.data, usedFallback: false }
+    const contentFilterResult = validateAndFixContent(result.data.content)
+    const qualityResult = applyQualityFilter(contentFilterResult.fixedContent)
+    
+    return {
+      ...result.data,
+      content: qualityResult.fixedContent,
+      sections: result.data.sections?.map(s => {
+        const sectionFiltered = validateAndFixContent(s.content)
+        const sectionQuality = applyQualityFilter(sectionFiltered.fixedContent)
+        return { ...s, content: sectionQuality.fixedContent }
+      }),
+      usedFallback: false,
+    }
   }
 
-  // 실패 시 fallback
-  console.warn('[Restaurant Draft] AI generation failed, using fallback:', {
-    error: result.error?.code,
-    message: result.error?.message,
-  })
-
   const fallbackResult = generateDeterministicDraft(input)
-  return { ...fallbackResult, usedFallback: true }
+  const contentFilterResult = validateAndFixContent(fallbackResult.content)
+  const qualityResult = applyQualityFilter(contentFilterResult.fixedContent)
+  
+  return {
+    ...fallbackResult,
+    content: qualityResult.fixedContent,
+    sections: fallbackResult.sections?.map(s => {
+      const sectionFiltered = validateAndFixContent(s.content)
+      const sectionQuality = applyQualityFilter(sectionFiltered.fixedContent)
+      return { ...s, content: sectionQuality.fixedContent }
+    }),
+    usedFallback: true,
+  }
 }
 
 // ───────────────────────────────────────────────
@@ -351,7 +465,6 @@ export async function generateNextParagraph(
     expert: '전문적이고 심도있는 리뷰 톤. 맛 평가, 요리 분석 포함.',
   }
 
-  // TODO: 실제 AI API 호출
   console.log('[AI] Generating next paragraph for:', placeProfile.name)
   
   return {
@@ -374,7 +487,6 @@ export async function improveParagraph(
   reviewDigest: { highlights: string[] },
   tone: 'casual' | 'formal' | 'expert'
 ): Promise<RestaurantAssistantMessage> {
-  // TODO: AI API 호출
   console.log('[AI] Improving paragraph...')
   
   return {
@@ -396,13 +508,15 @@ export async function suggestQuote(
   context: string,
   availableQuotes: string[]
 ): Promise<{ quote: string; context: string } | null> {
-  // TODO: AI API 호출
   console.log('[AI] Suggesting quote...')
   
   if (availableQuotes.length === 0) return null
   
+  // 인용구 정제 (메모투 제거)
+  const cleanQuote = availableQuotes[0].replace(/^(리뷰|후기|방문객)\s*[:\-]?\s*/gi, '')
+  
   return {
-    quote: availableQuotes[0],
+    quote: cleanQuote,
     context: '현재 문맥에 잘 어울리는 인용구입니다.',
   }
 }
@@ -416,7 +530,6 @@ export async function generateMenuDescription(
   menuName: string,
   category: string
 ): Promise<string> {
-  // TODO: AI API 호출
   console.log('[AI] Generating menu description for:', menuName)
   return `${menuName}는 ${category}의 대표 메뉴로, 특유의 풍미가 인상적입니다.`
 }

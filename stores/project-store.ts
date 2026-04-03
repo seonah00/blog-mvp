@@ -103,6 +103,16 @@ interface ProjectStore {
   informationalKeyPoints: Record<string, KeyPoint[]>
   /** 초안 작성 설정 */
   informationalDraftSettings: Record<string, InformationalDraftSettings | undefined>
+  /** 초안 생성 상태 (NEW) */
+  informationalDraftStatus: Record<string, {
+    isGenerating: boolean
+    error: string | null
+    progress: number
+    // 8단계 세부 상태
+    currentStage?: string
+    stageLabel?: string
+    stageIndex?: number // 0-7
+  }>
 
   // ───────────────────────────────────────────────
   // Threads Domain States (NEW)
@@ -267,6 +277,7 @@ export const useProjectStore = create<ProjectStore>()(
       informationalTopicAnalysis: {},
       informationalKeyPoints: {},
       informationalDraftSettings: {},
+      informationalDraftStatus: {},
 
       // Threads Domain States 초기화 (NEW)
       threadsMeta: {},
@@ -535,12 +546,23 @@ ${project.topic}에 대해 작성하는 글입니다.
           }
         }
 
+        // 8단계 progress 초기화
+        set((state) => ({
+          informationalDraftStatus: {
+            ...state.informationalDraftStatus,
+            [projectId]: {
+              isGenerating: true,
+              error: null,
+              progress: 0,
+              currentStage: 'source-collection',
+              stageLabel: '자료 수집 중',
+              stageIndex: 0,
+            },
+          },
+        }))
+
         try {
-          // AI 초안 생성 (canonicalPlace와 webEvidence 포함)
-          // 데이터 신뢰 우선순위:
-          // 1. 사용자 직접 입력 (reviewDigest)
-          // 2. 구조화 장소 데이터 (canonicalPlace)
-          // 3. 웹 조사 데이터 (webEvidence)
+          // AI 초안 생성 (8단계 pipeline with progress)
           const output = await generateRestaurantDraft({
             placeProfile,
             canonicalPlace: canonicalPlace || undefined,
@@ -549,6 +571,32 @@ ${project.topic}에 대해 작성하는 글입니다.
             projectTitle: project.title,
             projectTopic: project.topic,
             webEvidence: webEvidence.length > 0 ? webEvidence : undefined,
+          }, (status) => {
+            // Progress 콜백
+            const stageLabels: Record<string, string> = {
+              'source-collection': '자료 수집 중',
+              'research-distillation': '핵심 내용 정리 중',
+              'outline-generation': '글 구조 설계 중',
+              'title-generation': '제목 생성 중',
+              'body-generation': '본문 작성 중',
+              'natural-rewrite': '문장 다듬는 중',
+              'quality-review': '품질 검사 중',
+              'draft-commit': '완료',
+            }
+            
+            set((state) => ({
+              informationalDraftStatus: {
+                ...state.informationalDraftStatus,
+                [projectId]: {
+                  isGenerating: status.progress < 100,
+                  error: null,
+                  progress: status.progress,
+                  currentStage: status.stage,
+                  stageLabel: stageLabels[status.stage] || status.message,
+                  stageIndex: ['source-collection', 'research-distillation', 'outline-generation', 'title-generation', 'body-generation', 'natural-rewrite', 'quality-review', 'draft-commit'].indexOf(status.stage),
+                },
+              },
+            }))
           })
 
           const draft: Draft = {
@@ -566,11 +614,37 @@ ${project.topic}에 대해 작성하는 글입니다.
               ...state.drafts,
               [projectId]: draft,
             },
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: false,
+                error: null,
+                progress: 100,
+                currentStage: 'draft-commit',
+                stageLabel: '완료',
+                stageIndex: 7,
+              },
+            },
           }))
 
           return draft
         } catch (error) {
           console.error('[createRestaurantDraft] Failed:', error)
+          
+          set((state) => ({
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: false,
+                error: error instanceof Error ? error.message : '초안 생성 중 오류가 발생했습니다.',
+                progress: 0,
+                currentStage: 'error',
+                stageLabel: '오류 발생',
+                stageIndex: -1,
+              },
+            },
+          }))
+          
           return undefined
         }
       },
@@ -1329,7 +1403,7 @@ ${project.topic}에 대해 작성하는 글입니다.
       // Informational Domain Actions 구현 (신규)
       // ───────────────────────────────────────────────
       
-      // Informational Draft 생성
+      // Informational Draft 생성 (로딩 상태 및 에러 처리 개선)
       createInformationalDraft: async (projectId) => {
         const existing = get().drafts[projectId]
         if (existing) return existing
@@ -1344,6 +1418,18 @@ ${project.topic}에 대해 작성하는 글입니다.
         if (!project || !settings) return undefined
         if (project.type !== 'informational') return undefined
         
+        // 로딩 상태 시작
+        set((state) => ({
+          informationalDraftStatus: {
+            ...state.informationalDraftStatus,
+            [projectId]: {
+              isGenerating: true,
+              error: null,
+              progress: 0,
+            },
+          },
+        }))
+        
         // InformationalDraftSettings가 없으면 기본값 사용
         const draftSettings: InformationalDraftSettings = infoSettings ?? {
           channel: 'blog',
@@ -1357,6 +1443,19 @@ ${project.topic}에 대해 작성하는 글입니다.
         // outline이나 source가 없어도 fallback으로 진행
         if (!outline || !sources || sources.length === 0 || !meta) {
           console.warn('[createInformationalDraft] Missing research data, using fallback')
+          
+          // 진행률 업데이트
+          set((state) => ({
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: true,
+                error: null,
+                progress: 30,
+              },
+            },
+          }))
+          
           const fallbackContent = `# ${project.title}
 
 ${project.topic}에 대해 작성하는 글입니다.
@@ -1391,6 +1490,14 @@ ${project.topic}에 대해 작성하는 글입니다.
               ...state.drafts,
               [projectId]: fallbackDraft,
             },
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: false,
+                error: null,
+                progress: 100,
+              },
+            },
           }))
 
           return fallbackDraft
@@ -1398,7 +1505,42 @@ ${project.topic}에 대해 작성하는 글입니다.
 
         // AI 생성 시도
         try {
+          // 진행률 업데이트
+          set((state) => ({
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: true,
+                error: null,
+                progress: 20,
+              },
+            },
+          }))
+          
           const { generateInformationalDraft } = await import('@/lib/ai/informational-draft')
+
+          // 진행률 업데이트
+          set((state) => ({
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: true,
+                error: null,
+                progress: 50,
+              },
+            },
+          }))
+
+          const stageLabels: Record<string, string> = {
+            'source-collection': '자료 수집 중',
+            'research-distillation': '핵심 내용 정리 중',
+            'outline-generation': '글 구조 설계 중',
+            'title-generation': '제목 생성 중',
+            'body-generation': '본문 작성 중',
+            'natural-rewrite': '문장 다듬는 중',
+            'quality-review': '품질 검사 중',
+            'draft-commit': '완료',
+          }
 
           const result = await generateInformationalDraft({
             meta,
@@ -1410,6 +1552,21 @@ ${project.topic}에 대해 작성하는 글입니다.
             customPrompt: draftSettings.customPrompt,
             promptMode: draftSettings.promptMode,
             presetId: draftSettings.presetId,
+          }, (status) => {
+            // Progress 콜백
+            set((state) => ({
+              informationalDraftStatus: {
+                ...state.informationalDraftStatus,
+                [projectId]: {
+                  isGenerating: status.progress < 100,
+                  error: null,
+                  progress: status.progress,
+                  currentStage: status.stage,
+                  stageLabel: stageLabels[status.stage] || status.message,
+                  stageIndex: ['source-collection', 'research-distillation', 'outline-generation', 'title-generation', 'body-generation', 'natural-rewrite', 'quality-review', 'draft-commit'].indexOf(status.stage),
+                },
+              },
+            }))
           })
 
           const draft: Draft = {
@@ -1427,11 +1584,35 @@ ${project.topic}에 대해 작성하는 글입니다.
               ...state.drafts,
               [projectId]: draft,
             },
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: false,
+                error: null,
+                progress: 100,
+              },
+            },
           }))
 
           return draft
         } catch (error) {
           console.error('[createInformationalDraft] Failed:', error)
+          
+          // 에러 상태 업데이트
+          set((state) => ({
+            informationalDraftStatus: {
+              ...state.informationalDraftStatus,
+              [projectId]: {
+                isGenerating: false,
+                error: error instanceof Error ? error.message : '초안 생성 중 오류가 발생했습니다.',
+                progress: 0,
+                currentStage: 'error',
+                stageLabel: '오류 발생',
+                stageIndex: -1,
+              },
+            },
+          }))
+          
           return undefined
         }
       },

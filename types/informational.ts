@@ -262,9 +262,23 @@ export interface InformationalDraftOutput {
   /** 초안 작성에 사용된 소스 ID 목록 */
   usedSourceIds?: string[]
   metadata?: {
-    wordCount: number
-    estimatedReadTime: number
-    tone: string
+    wordCount?: number
+    estimatedReadTime?: number
+    tone?: string
+    titleQuality?: {
+      titleKeywordIncluded: boolean
+      titleKeyword: string
+      titleQualityStatus: 'valid' | 'fixed' | 'invalid' | 'pass' | 'fail'
+      titleQualityReason: string
+      titleValidationSummary: string[] | string
+    }
+    bannedTermsCheck?: {
+      bannedTermsFound: number | { term: string; line: number; context: string; position: number }[]
+      bannedTermsCount?: number
+      bannedTermsFixed?: number
+      bannedTermsStatus: 'pass' | 'warning' | 'fail'
+      bannedTermsFixSummary?: string[]
+    }
   }
   usedFallback?: boolean
 }

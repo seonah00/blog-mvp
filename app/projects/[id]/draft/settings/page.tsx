@@ -13,6 +13,112 @@ import type {
   ReviewDigest
 } from '@/types'
 
+// 8단계 진행 상태 컴포넌트
+function DraftProgressPanel({ 
+  status 
+}: { 
+  status: { 
+    isGenerating: boolean
+    progress: number
+    currentStage?: string
+    stageLabel?: string
+    stageIndex?: number
+    error?: string | null
+  }
+}) {
+  const stages = [
+    { key: 'source-collection', label: '자료 수집' },
+    { key: 'research-distillation', label: '핵심 내용 정리' },
+    { key: 'outline-generation', label: '글 구조 설계' },
+    { key: 'title-generation', label: '제목 생성' },
+    { key: 'body-generation', label: '본문 작성' },
+    { key: 'natural-rewrite', label: '문장 다듬기' },
+    { key: 'quality-review', label: '품질 검사' },
+    { key: 'draft-commit', label: '완료' },
+  ]
+
+  if (!status.isGenerating && status.error) {
+    return (
+      <div className="p-4 rounded-lg border" style={{ backgroundColor: 'var(--status-error-bg)', borderColor: 'var(--status-error)' }}>
+        <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--status-error)' }}>
+          <span className="material-symbols-outlined text-sm">error</span>
+          <span>생성 실패: {status.error}</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!status.isGenerating && status.progress === 100) {
+    return (
+      <div className="p-4 rounded-lg border" style={{ backgroundColor: 'var(--status-success-bg)', borderColor: 'var(--status-success)' }}>
+        <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--status-success)' }}>
+          <span className="material-symbols-outlined text-sm">check_circle</span>
+          <span>초안 생성 완료!</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!status.isGenerating) return null
+
+  const currentIndex = status.stageIndex ?? -1
+
+  return (
+    <div className="p-4 rounded-lg border space-y-3" style={{ backgroundColor: 'var(--workspace-secondary)', borderColor: 'var(--border-secondary)' }}>
+      {/* 현재 단계 */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+          {status.stageLabel || '초안 생성 중...'}
+        </span>
+        <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+          {status.progress}%
+        </span>
+      </div>
+      
+      {/* Progress Bar */}
+      <div className="w-full bg-gray-200 rounded-full h-2">
+        <div 
+          className="h-2 rounded-full transition-all duration-500"
+          style={{ 
+            width: `${status.progress}%`,
+            backgroundColor: 'var(--accent-interactive)'
+          }}
+        />
+      </div>
+      
+      {/* 8단계 Stepper */}
+      <div className="grid grid-cols-8 gap-1 pt-2">
+        {stages.map((stage, index) => {
+          const isCompleted = index < currentIndex
+          const isCurrent = index === currentIndex
+          const isPending = index > currentIndex
+          
+          return (
+            <div key={stage.key} className="flex flex-col items-center gap-1">
+              <div 
+                className="w-2 h-2 rounded-full"
+                style={{
+                  backgroundColor: isCompleted || isCurrent ? 'var(--accent-interactive)' : 'var(--border-secondary)',
+                  opacity: isPending ? 0.3 : 1
+                }}
+              />
+              <span 
+                className="text-[9px] text-center leading-tight hidden sm:block"
+                style={{
+                  color: isCurrent ? 'var(--accent-interactive)' : 'var(--text-tertiary)',
+                  fontWeight: isCurrent ? 600 : 400
+                }}
+              >
+                {stage.label}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 const defaultSettings: DraftSettings = {
   category: '블로그 포스트',
   goal: '',
@@ -154,6 +260,17 @@ function RestaurantDraftSettingsForm({
   const placeProfile = useProjectStore((state) => state.getSelectedPlace(projectId))
   const saveDraftSettings = useProjectStore((state) => state.saveDraftSettings)
   const createRestaurantDraft = useProjectStore((state) => state.createRestaurantDraft)
+  const draftStatus = useProjectStore((state) => state.informationalDraftStatus[projectId])
+
+  // Store의 draft 상태와 로컬 상태 동기화
+  useEffect(() => {
+    if (draftStatus) {
+      setIsGenerating(draftStatus.isGenerating)
+      if (draftStatus.error) {
+        setError(draftStatus.error)
+      }
+    }
+  }, [draftStatus])
 
   const canGenerate = !!reviewDigest && !!placeProfile
 
@@ -186,6 +303,18 @@ function RestaurantDraftSettingsForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Progress Panel */}
+      {draftStatus?.isGenerating && (
+        <DraftProgressPanel status={draftStatus} />
+      )}
+      
+      {/* Error Display */}
+      {error && (
+        <Notice variant="warning" title="초안 생성 오류">
+          {error}
+        </Notice>
+      )}
+      
       {/* Research Data Summary */}
       <Panel>
         <PanelHeader 
@@ -315,16 +444,9 @@ function RestaurantDraftSettingsForm({
         </PanelBody>
       </Panel>
 
-      {/* Error */}
-      {error && (
-        <Notice variant="warning" title="초안 생성 오류">
-          {error}
-        </Notice>
-      )}
-
       {/* Actions */}
       <div className="flex justify-between gap-3 pt-2">
-        <button type="button" onClick={() => window.history.back()} className="btn-secondary text-sm">
+        <button type="button" onClick={() => window.history.back()} className="btn-secondary text-sm" disabled={isGenerating}>
           이전 단계
         </button>
         <button
@@ -335,7 +457,7 @@ function RestaurantDraftSettingsForm({
           {isGenerating ? (
             <>
               <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-              생성 중...
+              {draftStatus?.stageLabel || '생성 중...'}
             </>
           ) : !canGenerate ? (
             '리서치 데이터 필요'
@@ -377,9 +499,20 @@ function InformationalDraftSettingsForm({
   const sources = useProjectStore((state) => state.getSourceDocuments(projectId))
   const outline = useProjectStore((state) => state.getOutline(projectId))
   const existingInfoSettings = useProjectStore((state) => state.getInformationalDraftSettings(projectId))
+  const draftStatus = useProjectStore((state) => state.informationalDraftStatus[projectId])
   const saveDraftSettings = useProjectStore((state) => state.saveDraftSettings)
   const saveInformationalDraftSettings = useProjectStore((state) => state.saveInformationalDraftSettings)
   const createInformationalDraft = useProjectStore((state) => state.createInformationalDraft)
+  
+  // Store의 draft 상태와 로컬 상태 동기화
+  useEffect(() => {
+    if (draftStatus) {
+      setIsGenerating(draftStatus.isGenerating)
+      if (draftStatus.error) {
+        setError(draftStatus.error)
+      }
+    }
+  }, [draftStatus])
 
   useEffect(() => {
     if (existingInfoSettings) {
@@ -440,6 +573,18 @@ function InformationalDraftSettingsForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Progress Panel */}
+      {draftStatus?.isGenerating && (
+        <DraftProgressPanel status={draftStatus} />
+      )}
+      
+      {/* Error Display */}
+      {error && (
+        <Notice variant="warning" title="초안 생성 오류">
+          {error}
+        </Notice>
+      )}
+      
       {/* Research Data */}
       <Panel>
         <PanelHeader title="리서치 데이터" />
@@ -702,16 +847,9 @@ function InformationalDraftSettingsForm({
         </PanelBody>
       </Panel>
 
-      {/* Error */}
-      {error && (
-        <Notice variant="warning" title="초안 생성 오류">
-          {error}
-        </Notice>
-      )}
-
       {/* Actions */}
       <div className="flex justify-between gap-3 pt-2">
-        <button type="button" onClick={() => window.history.back()} className="btn-secondary text-sm">
+        <button type="button" onClick={() => window.history.back()} className="btn-secondary text-sm" disabled={isGenerating}>
           이전 단계
         </button>
         <button
@@ -722,7 +860,7 @@ function InformationalDraftSettingsForm({
           {isGenerating ? (
             <>
               <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-              생성 중...
+              {draftStatus?.stageLabel || '생성 중...'}
             </>
           ) : (
             <>

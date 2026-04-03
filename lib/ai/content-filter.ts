@@ -380,9 +380,9 @@ export interface DraftWithFilterResult {
   }>
   keywordsUsed?: string[]
   metadata?: {
-    wordCount: number
-    estimatedReadTime: number
-    tone: string
+    wordCount?: number
+    estimatedReadTime?: number
+    tone?: string
   }
   usedFallback?: boolean
 }
@@ -396,7 +396,7 @@ export function applyContentFilter(draft: {
   sections?: Array<{ heading: string; content: string }>
   faq?: Array<{ question: string; answer: string }>
   keywordsUsed?: string[]
-  metadata?: { wordCount: number; estimatedReadTime: number; tone: string }
+  metadata?: { wordCount?: number; estimatedReadTime?: number; tone?: string }
   usedFallback?: boolean
 }): DraftWithFilterResult {
   // 본문 필터링
