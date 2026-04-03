@@ -1,9 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { useProjectStore } from '@/stores/project-store'
-import { mergeBlocksIntoContent, type Block } from '../draft/edit/components/BlockEditor'
 import { splitContentIntoBlocks } from '../draft/edit/components/BlockEditor'
 
 // Components
@@ -14,12 +13,11 @@ import { GeneratedImageGrid } from './components/GeneratedImageGrid'
 
 // AI Layer
 import { generateImagePrompts as generateImagePromptsAction } from './actions'
-import { generateMockImagesFromPrompts, type MockImageGenerationParams } from './lib/mock-images'
+import { generateMockImagesFromPrompts } from './lib/mock-images'
 import type { ImagePrompt } from '@/types'
-import type { ImageStyle, ImageRatio, ImagePurpose } from '@/lib/ai'
+import type { ImageStyle, ImageRatio } from '@/lib/ai'
 
 export default function ImageGenerationPage() {
-  const router = useRouter()
   const params = useParams<{ id: string }>()
   const projectId = params.id
 
@@ -33,27 +31,28 @@ export default function ImageGenerationPage() {
   const selectGeneratedImage = useProjectStore((state) => state.selectGeneratedImage)
 
   // Local state
-  const [blocks, setBlocks] = useState<Block[]>([])
+  const [blocks, setBlocks] = useState<{ id: string; content: string }[]>([])
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
   const [activePromptId, setActivePromptId] = useState<string | null>(null)
   const [generating, setGenerating] = useState<Set<string>>(new Set())
 
-  // Initialize blocks from draft
+  // Initialize blocks from draft and generate prompts if needed
+  // draft.content와 promptCount 변경 시에만 실행
+  const draftContent = draft?.content
+  const promptCount = imagePrompts.length
   useEffect(() => {
-    if (draft) {
-      const initialBlocks = splitContentIntoBlocks(draft.content)
-      setBlocks(initialBlocks)
+    if (draftContent == null) return
+    const initialBlocks = splitContentIntoBlocks(draftContent)
+    setBlocks(initialBlocks)
 
-      // Generate prompts if not exists
-      const prompts = imagePrompts
-      if (prompts.length === 0 && initialBlocks.length > 0) {
-        generateImagePrompts(
-          projectId,
-          initialBlocks.map((b) => ({ id: b.id, content: b.content }))
-        )
-      }
+    // Generate prompts if not exists
+    if (promptCount === 0 && initialBlocks.length > 0) {
+      generateImagePrompts(
+        projectId,
+        initialBlocks.map((b) => ({ id: b.id, content: b.content }))
+      )
     }
-  }, [draft?.projectId])
+  }, [draftContent, promptCount, generateImagePrompts, projectId])
 
   // Toggle block selection
   const toggleBlockSelection = useCallback((blockId: string) => {
@@ -134,7 +133,6 @@ export default function ImageGenerationPage() {
           const images = generateMockImagesFromPrompts({
             projectId,
             promptId: prompt.id,
-            blockId: prompt.blockId,
             promptOutput: result.data,
           })
 

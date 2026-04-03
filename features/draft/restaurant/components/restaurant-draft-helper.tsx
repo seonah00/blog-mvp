@@ -12,7 +12,7 @@
 'use client'
 
 import { useState, useCallback, useMemo } from 'react'
-import { useProjectStore, useRestaurantDraftVersions } from '@/stores/project-store'
+import { useProjectStore } from '@/stores/project-store'
 import type { NormalizedPlaceProfile, ReviewDigest, RestaurantDraftVariationPreset, RestaurantDraftSettings, RestaurantDraftVersion } from '@/types'
 import { formatRelativeTime } from '@/lib/utils'
 import { RestaurantDraftDiffView } from './restaurant-draft-diff-view'
@@ -256,7 +256,8 @@ function VersionListSection({
   onVersionSwitchRequest?: (versionId: string, label?: string) => void
   isDirty?: boolean 
 }) {
-  const { versions, currentVersion } = useRestaurantDraftVersions(projectId)
+  const versions = useProjectStore((state) => state.getDraftVersions(projectId))
+  const currentVersion = useProjectStore((state) => state.getCurrentDraftVersion(projectId))
   const currentVersionId = currentVersion?.id
   const store = useProjectStore()
   
@@ -304,7 +305,7 @@ function VersionListSection({
       collapsed={versions.length > 3}
     >
       <div className="space-y-1.5">
-        {versions.map((version) => {
+        {versions.map((version: RestaurantDraftVersion) => {
           const isCurrent = version.id === currentVersionId
           
           return (
@@ -396,10 +397,10 @@ function DiffSection({ projectId }: { projectId: string }) {
   const [baseVersionId, setBaseVersionId] = useState<string>('')
   const [compareVersionId, setCompareVersionId] = useState<string>('')
   
-  const { versions } = useRestaurantDraftVersions(projectId)
+  const versions = useProjectStore((state) => state.getDraftVersions(projectId))
   
-  const baseVersion = versions.find(v => v.id === baseVersionId)
-  const compareVersion = versions.find(v => v.id === compareVersionId)
+  const baseVersion = versions.find((v: RestaurantDraftVersion) => v.id === baseVersionId)
+  const compareVersion = versions.find((v: RestaurantDraftVersion) => v.id === compareVersionId)
   
   if (versions.length < 2) {
     return (
@@ -447,7 +448,7 @@ function DiffSection({ projectId }: { projectId: string }) {
               onChange={(e) => setBaseVersionId(e.target.value)}
               className="select text-xs py-1"
             >
-              {versions.map(v => (
+              {versions.map((v: RestaurantDraftVersion) => (
                 <option key={v.id} value={v.id}>{v.label}</option>
               ))}
             </select>
@@ -459,7 +460,7 @@ function DiffSection({ projectId }: { projectId: string }) {
               onChange={(e) => setCompareVersionId(e.target.value)}
               className="select text-xs py-1"
             >
-              {versions.map(v => (
+              {versions.map((v: RestaurantDraftVersion) => (
                 <option key={v.id} value={v.id}>{v.label}</option>
               ))}
             </select>

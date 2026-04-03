@@ -52,6 +52,9 @@ import { generateRestaurantDraft } from '@/lib/ai/restaurant-draft'
 import { generateThreadsDraft } from '@/lib/ai/prompts/threads-draft'
 import { generateKarrotDraft } from '@/lib/ai/prompts/karrot-draft'
 
+// 참조 안정성을 위한 상수들 (React #185 오류 방지)
+const EMPTY_ARRAY = Object.freeze([]) as unknown as never[]
+
 interface ProjectStore {
   hasHydrated: boolean
 
@@ -366,9 +369,10 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       getSelectedResearchItems: (projectId) => {
-        const items = get().researchItems[projectId] ?? []
-        const selectedIds = get().selectedResearchIds[projectId] ?? []
+        const items = get().researchItems[projectId]
+        const selectedIds = get().selectedResearchIds[projectId]
 
+        if (!items || !selectedIds) return EMPTY_ARRAY as ResearchItem[]
         return items.filter((item) => selectedIds.includes(item.id))
       },
 
@@ -807,7 +811,7 @@ ${project.topic}에 대해 작성하는 글입니다.
       },
 
       getImagePrompts: (projectId) => {
-        return get().imagePrompts[projectId] ?? []
+        return get().imagePrompts[projectId] || (EMPTY_ARRAY as ImagePrompt[])
       },
 
       updateImagePrompt: (projectId, promptId, updates) => {
@@ -868,10 +872,10 @@ ${project.topic}에 대해 작성하는 글입니다.
         }))
       },
       getPlaceCandidates: (projectId) => {
-        return get().restaurantPlaceCandidates[projectId] ?? []
+        return get().restaurantPlaceCandidates[projectId] || (EMPTY_ARRAY as PlaceCandidate[])
       },
       getCanonicalPlaces: (projectId) => {
-        return get().restaurantCanonicalPlaces[projectId] ?? []
+        return get().restaurantCanonicalPlaces[projectId] || (EMPTY_ARRAY as CanonicalPlace[])
       },
       selectPlace: (projectId, place, canonicalPlace) => {
         set((state) => ({
@@ -905,7 +909,7 @@ ${project.topic}에 대해 작성하는 글입니다.
         }))
       },
       getReviewInputs: (projectId) => {
-        return get().restaurantReviewInputs[projectId] ?? []
+        return get().restaurantReviewInputs[projectId] || (EMPTY_ARRAY as UserReviewInput[])
       },
       removeReviewInput: (projectId, reviewId) => {
         set((state) => ({
@@ -956,7 +960,7 @@ ${project.topic}에 대해 작성하는 글입니다.
         }))
       },
       getWebEvidence: (projectId) => {
-        return get().restaurantWebEvidence[projectId] ?? []
+        return get().restaurantWebEvidence[projectId] || (EMPTY_ARRAY as WebEvidence[])
       },
       removeWebEvidence: (projectId, evidenceId) => {
         set((state) => ({
@@ -1000,7 +1004,7 @@ ${project.topic}에 대해 작성하는 글입니다.
       },
 
       getDraftVersions: (projectId) => {
-        return get().restaurantDraftVersions[projectId] ?? []
+        return get().restaurantDraftVersions[projectId] || (EMPTY_ARRAY as RestaurantDraftVersion[])
       },
 
       getDraftVersionById: (projectId, versionId) => {
@@ -1458,7 +1462,7 @@ ${project.topic}에 대해 작성하는 글입니다.
         }))
       },
       getSources: (projectId) => {
-        return get().informationalSources[projectId] ?? []
+        return get().informationalSources[projectId] || (EMPTY_ARRAY as SourceInput[])
       },
       removeSource: (projectId, sourceId) => {
         set((state) => ({
@@ -1479,7 +1483,7 @@ ${project.topic}에 대해 작성하는 글입니다.
         }))
       },
       getSourceDocuments: (projectId) => {
-        return get().informationalSourceDocs[projectId] ?? []
+        return get().informationalSourceDocs[projectId] || (EMPTY_ARRAY as SourceDocument[])
       },
       setOutline: (projectId, outline) => {
         set((state) => ({
@@ -1512,7 +1516,7 @@ ${project.topic}에 대해 작성하는 글입니다.
         }))
       },
       getKeyPoints: (projectId) => {
-        return get().informationalKeyPoints[projectId] ?? []
+        return get().informationalKeyPoints[projectId] || (EMPTY_ARRAY as KeyPoint[])
       },
 
       resetAll: () =>
@@ -1580,79 +1584,13 @@ ${project.topic}에 대해 작성하는 글입니다.
 )
 
 // ============================================
-// Draft Version Management Hook
+// 안정적인 Selector Helpers
 // ============================================
 
 /**
- * Restaurant Draft Version 관리를 위한 커스텀 훅
- * 
- * 사용 예시:
- * ```tsx
- * const {
- *   versions,
- *   currentVersion,
- *   addVersion,
- *   switchVersion,
- *   regenerateDraft,
- *   createVariation,
- * } = useRestaurantDraftVersions(projectId)
- * ```
+ * 안전한 배열 반환을 위한 헬퍼
+ * React #185 오류 방지를 위해 참조 안정성 확보
  */
-export function useRestaurantDraftVersions(projectId: string | null) {
-  const store = useProjectStore()
-  
-  const versions = projectId 
-    ? store.getDraftVersions(projectId) 
-    : []
-  
-  const currentVersion = projectId
-    ? store.getCurrentDraftVersion(projectId)
-    : undefined
-  
-  const activeDraft = projectId
-    ? store.drafts[projectId]
-    : undefined
-
-  const addVersion = useCallback((
-    version: Omit<RestaurantDraftVersion, 'id'>
-  ) => {
-    if (!projectId) return undefined
-    return store.addDraftVersion(projectId, version)
-  }, [projectId, store])
-
-  const switchVersion = useCallback((versionId: string) => {
-    if (!projectId) return
-    store.setCurrentDraftVersionId(projectId, versionId)
-  }, [projectId, store])
-
-  const regenerateDraft = useCallback(async (
-    settings: RestaurantDraftSettings
-  ) => {
-    if (!projectId) return null
-    // Implementation will be added in actions
-    return store.regenerateRestaurantDraft(projectId, settings)
-  }, [projectId, store])
-
-  const createVariation = useCallback(async (
-    settings: RestaurantDraftSettings,
-    preset: RestaurantDraftVariationPreset
-  ) => {
-    if (!projectId) return null
-    // Implementation will be added in actions  
-    return store.createRestaurantDraftVariation(projectId, settings, preset)
-  }, [projectId, store])
-
-  return {
-    // State
-    versions,
-    currentVersion,
-    activeDraft,
-    hasVersions: versions.length > 0,
-    
-    // Actions
-    addVersion,
-    switchVersion,
-    regenerateDraft,
-    createVariation,
-  }
+export function safeArray<T>(arr: T[] | undefined): T[] {
+  return arr || (EMPTY_ARRAY as T[])
 }

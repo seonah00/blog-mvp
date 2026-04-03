@@ -1,28 +1,47 @@
 /**
  * Research Actions
  * 
- * Server/Client actions for research operations
- * - Place search with parallel API calls (Naver/Kakao/Google)
+ * Server Actions for research operations
+ * - Place search with parallel API calls (Naver/Google)
  * - Result normalization and deduplication
  * - Review digest generation
  * - Optional Perplexity web research
  * 
- * TODO: 검색 캐시/요청 제한 - 동일 query 재검색 방지
- * TODO: observability/logging - 검색 성공률/응답시간 모니터링
+ * Architecture:
+ * - NEW: lib/server/* - Canonical server utilities (Google Places API New + Naver Search)
+ * - LEGACY: lib/integrations/* - Deprecated, kept for backward compatibility
+ * 
+ * Feature flag: USE_NEW_RESTAURANT_SEARCH=true enables new architecture
  */
 
 'use server'
 
+import { 
+  shouldUseMockPlaces, 
+  isNewRestaurantSearchEnabled,
+  isRestaurantWebResearchEnabled,
+} from '@/lib/integrations/env'
+
+// NEW: Canonical server utilities
+import { 
+  searchRestaurantCandidates,
+  getRestaurantGrounding,
+} from '@/lib/server'
+import type { 
+  SearchCandidatesInput,
+  RestaurantCandidate 
+} from '@/types'
+
+// LEGACY: Keep for backward compatibility when feature flag is off
 import { searchGooglePlaces } from '@/lib/integrations/google-places'
 import { searchNaverLocal } from '@/lib/integrations/naver-local'
 import { searchKakaoLocal } from '@/lib/integrations/kakao-local'
 import { 
-  shouldUseMockPlaces, 
   isGooglePlacesAvailable, 
   isNaverLocalAvailable,
   isKakaoLocalAvailable,
-  isRestaurantWebResearchEnabled,
 } from '@/lib/integrations/env'
+
 import { generateReviewDigest } from '@/lib/ai/restaurant-research'
 import { mergeCandidatesToCanonical, toNormalizedProfile } from '@/lib/research/canonical-place'
 import { researchRestaurantPlace } from '@/lib/integrations/perplexity'
@@ -130,6 +149,29 @@ async function getMockPlaceCandidates(
 }
 
 /**
+ * Convert new RestaurantCandidate to legacy PlaceCandidate
+ */
+function toLegacyPlaceCandidate(candidate: RestaurantCandidate): PlaceCandidate {
+  return {
+    id: candidate.id,
+    source: candidate.provider === 'google_places' ? 'google_places_api' : 'naver_local_api',
+    externalId: candidate.externalId,
+    name: candidate.name,
+    category: candidate.category,
+    address: candidate.address || candidate.roadAddress || '',
+    roadAddress: candidate.roadAddress,
+    latitude: candidate.lat,
+    longitude: candidate.lng,
+    rating: candidate.rating,
+    reviewCount: candidate.reviewCount,
+    phone: candidate.phone,
+    websiteUrl: candidate.websiteUrl,
+    mapUrl: candidate.googleMapsUrl || candidate.naverMapUrl,
+    description: [...candidate.matchReasons, ...candidate.warnings].join(', '),
+  }
+}
+
+/**
  * Simple deduplication by name + address similarity
  */
 function deduplicateCandidates(candidates: PlaceCandidate[]): PlaceCandidate[] {
@@ -154,17 +196,17 @@ function deduplicateCandidates(candidates: PlaceCandidate[]): PlaceCandidate[] {
 /**
  * Search places from multiple sources
  * 
- * Parallel calls to Naver + Kakao (+ optional Google)
- * Falls back to mock if no API keys or USE_MOCK_PLACES set
- * Returns both raw candidates and canonical places
+ * Architecture:
+ * 1. Check feature flag: USE_NEW_RESTAURANT_SEARCH
+ * 2. If enabled: Use new lib/server/* utilities (Google Places API New + Naver)
+ * 3. If disabled: Use legacy lib/integrations/* (Kakao + Naver + Google Old)
+ * 
+ * Both paths return unified PlaceCandidate[] for backward compatibility
  */
 export async function searchPlacesAction(
   query: string,
   region: string = ''
 ): Promise<SearchPlacesResult> {
-  const warnings: string[] = []
-  const errors: string[] = []
-  
   // Input validation
   if (!query.trim()) {
     return {
@@ -176,7 +218,7 @@ export async function searchPlacesAction(
       usedFallback: false,
     }
   }
-  
+
   // Check mock fallback
   if (shouldUseMockPlaces()) {
     console.log('[Search] Using mock fallback (no API keys or USE_MOCK_PLACES=true)')
@@ -192,6 +234,92 @@ export async function searchPlacesAction(
     }
   }
 
+  // Feature flag: Use new architecture
+  if (isNewRestaurantSearchEnabled()) {
+    console.log('[Search] Using NEW restaurant search architecture')
+    return searchPlacesNew(query, region)
+  }
+
+  // Legacy path
+  console.log('[Search] Using LEGACY restaurant search architecture')
+  return searchPlacesLegacy(query, region)
+}
+
+/**
+ * NEW: Search using lib/server/* utilities
+ * - Google Places API (New) with FieldMask
+ * - Naver Local Search
+ * - Scoring & homonym detection
+ */
+async function searchPlacesNew(
+  query: string,
+  region: string
+): Promise<SearchPlacesResult> {
+  const warnings: string[] = []
+  const errors: string[] = []
+
+  try {
+    const input: SearchCandidatesInput = {
+      placeName: query.trim(),
+      region: region.trim() || undefined,
+    }
+
+    const result = await searchRestaurantCandidates(input)
+
+    if (!result.success) {
+      return {
+        success: false,
+        candidates: [],
+        sources: { google: 0, naver: 0, kakao: 0, mock: 0 },
+        warnings: result.warnings,
+        errors: result.errors,
+        usedFallback: false,
+      }
+    }
+
+    // Convert new candidates to legacy format
+    const legacyCandidates = result.candidates.map(toLegacyPlaceCandidate)
+
+    // Also build canonical places for new UI
+    const { places: canonicalPlaces } = mergeCandidatesToCanonical(legacyCandidates)
+
+    return {
+      success: true,
+      candidates: legacyCandidates,
+      canonicalPlaces,
+      sources: {
+        google: result.sources.google,
+        naver: result.sources.naver,
+        kakao: 0, // Kakao removed in new architecture
+        mock: 0,
+      },
+      warnings: result.warnings.length > 0 ? result.warnings : [],
+      errors: result.errors.length > 0 ? result.errors : [],
+      usedFallback: false,
+    }
+
+  } catch (error) {
+    console.error('[Search] New architecture failed:', error)
+    errors.push(error instanceof Error ? error.message : '검색 중 오류가 발생했습니다.')
+    
+    // Fallback to legacy on error
+    return searchPlacesLegacy(query, region)
+  }
+}
+
+/**
+ * LEGACY: Search using lib/integrations/* utilities
+ * - Google Places API (Old)
+ * - Naver Local Search  
+ * - Kakao Local Search (optional, often 403)
+ */
+async function searchPlacesLegacy(
+  query: string,
+  region: string
+): Promise<SearchPlacesResult> {
+  const warnings: string[] = []
+  const errors: string[] = []
+  
   const searchQuery = region.trim() ? `${region.trim()} ${query.trim()}` : query.trim()
   
   const kakaoAvailable = isKakaoLocalAvailable()
@@ -210,7 +338,7 @@ export async function searchPlacesAction(
   
   // Parallel API calls with individual error handling
   // Order: Naver, Kakao (optional), Google
-  // Kakao는 선택사항 - 실패필도 전체 검색을 막지 않음
+  // Kakao는 선택사항 - 실패해도 전체 검색을 막지 않음
   const results = await Promise.allSettled([
     isNaverLocalAvailable()
       ? searchNaverLocal(searchQuery).catch(err => {
@@ -328,6 +456,52 @@ export async function searchPlacesAction(
     warnings,
     errors,
     usedFallback: false,
+  }
+}
+
+/**
+ * NEW: Get grounding data for a restaurant
+ * Uses lib/server/* utilities
+ */
+export async function getRestaurantGroundingAction(
+  candidateId: string,
+  placeName: string,
+  region?: string,
+  googlePlaceId?: string
+): Promise<{
+  success: boolean
+  grounding?: Awaited<ReturnType<typeof getRestaurantGrounding>>
+  error?: string
+  warnings: string[]
+}> {
+  if (!isNewRestaurantSearchEnabled()) {
+    return {
+      success: false,
+      error: 'New restaurant search is not enabled',
+      warnings: [],
+    }
+  }
+
+  try {
+    const grounding = await getRestaurantGrounding({
+      candidateId,
+      placeName,
+      region,
+      googlePlaceId,
+    })
+
+    return {
+      success: true,
+      grounding,
+      warnings: grounding.warnings,
+    }
+  } catch (error) {
+    console.error('[Grounding Action] Failed:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '그라운딩 중 오류가 발생했습니다.',
+      warnings: [],
+    }
   }
 }
 

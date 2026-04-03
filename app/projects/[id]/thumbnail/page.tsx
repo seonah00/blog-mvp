@@ -36,14 +36,19 @@ export default function ThumbnailEditorPage() {
   }, [])
 
   // Initialize from draft and settings
+  // 실제 사용하는 필드가 변경될 때만 초기화 (객체 전체가 아닌 개별 필드 기준)
+  const draftTitle = draft?.title
+  const settingsTitle = thumbnailSettings?.title
+  const settingsSubtitle = thumbnailSettings?.subtitle
+  const settingsBrightness = thumbnailSettings?.brightness
+  const settingsStyle = thumbnailSettings?.style
+  
   useEffect(() => {
-    if (draft) {
-      setTitle(thumbnailSettings?.title || draft.title)
-      setSubtitle(thumbnailSettings?.subtitle || '')
-      setBrightness(thumbnailSettings?.brightness || 100)
-      setSelectedFilter(thumbnailSettings?.style || 'Original')
-    }
-  }, [draft?.projectId, thumbnailSettings])
+    setTitle(settingsTitle ?? draftTitle ?? '')
+    setSubtitle(settingsSubtitle ?? '')
+    setBrightness(settingsBrightness ?? 100)
+    setSelectedFilter(settingsStyle ?? 'Original')
+  }, [draftTitle, settingsTitle, settingsSubtitle, settingsBrightness, settingsStyle])
 
   // Find selected image from prompts (separate effect to react to imagePrompts changes)
   useEffect(() => {

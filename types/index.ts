@@ -53,6 +53,26 @@ export type {
 } from './restaurant'
 
 // ───────────────────────────────────────────────
+// Restaurant Search Types (NEW - v2 Architecture)
+// ───────────────────────────────────────────────
+export type {
+  ExternalSearchProvider,
+  RestaurantBusinessStatus,
+  RestaurantCandidate,
+  RestaurantSourceDocument,
+  RestaurantFactualData,
+  RestaurantGroundingResult,
+  SearchCandidatesResult,
+  GetGroundingResult,
+} from './restaurant-search'
+
+// NEW: Server-only input types (import type only)
+export type {
+  SearchCandidatesInput,
+  GroundingInput,
+} from '@/lib/server'
+
+// ───────────────────────────────────────────────
 // Informational Domain Types
 // ───────────────────────────────────────────────
 export type {

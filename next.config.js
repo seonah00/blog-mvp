@@ -7,6 +7,8 @@ const nextConfig = {
     unoptimized: true,
   },
   trailingSlash: true,
+  // Production 환경에서도 source map 생성 (디버깅용)
+  productionBrowserSourceMaps: true,
 }
 
 module.exports = nextConfig

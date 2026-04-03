@@ -1,27 +1,16 @@
 /**
  * Draft Editor Layout
  * - Editor 전용 레이아웃
- * - CorrectionPanel 포함
- * 
- * 원본: stitch-raw/components/03-editor-correction-panel.html
+ * - Server Component로 유지, 상태는 Client Wrapper에 위임
  */
 
-import { CorrectionPanel } from "@/features/draft/components/correction-panel/correction-panel";
+import { DraftEditorLayoutClient } from './components/DraftEditorLayoutClient'
 
 export default function DraftEditorLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
-  return (
-    <div className="flex h-full overflow-hidden">
-      {/* Main Editor Area */}
-      <div className="flex-1 overflow-hidden">
-        {children}
-      </div>
-      
-      {/* Right Correction Panel */}
-      <CorrectionPanel />
-    </div>
-  );
+  // Server Component 유지, Client 상태는 wrapper에서 처리
+  return <DraftEditorLayoutClient>{children}</DraftEditorLayoutClient>
 }

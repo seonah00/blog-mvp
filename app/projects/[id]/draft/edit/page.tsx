@@ -3,13 +3,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useProjectStore } from '@/stores/project-store'
-import { formatRelativeTime } from '@/lib/utils'
 
 // Components
 import { AutoSaveIndicator } from './components/AutoSaveIndicator'
 import { LastSavedTime } from './components/LastSavedTime'
 import { FloatingToolbar } from './components/FloatingToolbar'
-import { CorrectionPanel } from './components/CorrectionPanel'
 import { BlockEditor, splitContentIntoBlocks, mergeBlocksIntoContent, type Block } from './components/BlockEditor'
 
 // Type-specific Helper Components
@@ -51,7 +49,7 @@ function UnsavedChangesDialog({
             현재 편집 중인 내용이 저장되지 않았습니다.
             {targetVersionLabel && (
               <span className="block mt-1" style={{ color: 'var(--text-tertiary)' }}>
-                "{targetVersionLabel}"(으)로 전환하면 현재 변경사항이 사라집니다.
+                &quot;{targetVersionLabel}&quot;(으)로 전환하면 현재 변경사항이 사라집니다.
               </span>
             )}
           </p>
@@ -75,6 +73,7 @@ function UnsavedChangesDialog({
  * Edit Header Component
  */
 function EditHeader({
+  rightActions,
   draft,
   project,
   settings,
@@ -82,6 +81,7 @@ function EditHeader({
   isDirty,
   onSettingsClick,
 }: {
+  rightActions?: React.ReactNode
   draft: { title: string; version: number; wordCount: number; lastSavedAt?: string }
   project: { type: 'restaurant' | 'informational' | 'threads' | 'karrot'; title: string; topic: string }
   settings: { tone: string; length: string }
@@ -120,12 +120,19 @@ function EditHeader({
 
           {/* Right - Actions */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-md" style={{ backgroundColor: 'var(--workspace-secondary)' }}>
+            {/* Custom right actions */}
+            {rightActions}
+
+            <div
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-md"
+              style={{ backgroundColor: 'var(--workspace-secondary)' }}
+            >
               <AutoSaveIndicator status={autoSaveStatus} />
               <span style={{ color: 'var(--text-tertiary)' }}>·</span>
               <LastSavedTime lastSavedAt={draft.lastSavedAt} />
             </div>
-            <button onClick={onSettingsClick} className="btn-ghost text-xs" title="초안 설정">
+
+            <button onClick={onSettingsClick} className="btn-ghost text-xs" title="초안 설정" type="button">
               <span className="material-symbols-outlined text-base">settings</span>
             </button>
           </div>
@@ -141,6 +148,9 @@ export default function DraftEditPage() {
   const projectId = params.id
   const editorRef = useRef<HTMLDivElement>(null)
 
+  // Helper sidebar collapsed state
+  const [isHelperCollapsed, setIsHelperCollapsed] = useState(false)
+
   // Store
   const hasHydrated = useProjectStore((state) => state.hasHydrated)
   const project = useProjectStore((state) => state.getProject(projectId))
@@ -149,7 +159,9 @@ export default function DraftEditPage() {
   const createDraft = useProjectStore((state) => state.createDraft)
   const createRestaurantDraft = useProjectStore((state) => state.createRestaurantDraft)
   const updateDraftContent = useProjectStore((state) => state.updateDraftContent)
-  const reviewDigest = useProjectStore((state) => state.getReviewDigest(projectId))
+  // 리서치 데이터 연동용 (향후 사용 예정)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _reviewDigest = useProjectStore((state) => state.getReviewDigest(projectId))
 
   // Local state
   const [blocks, setBlocks] = useState<Block[]>([])
@@ -196,13 +208,14 @@ export default function DraftEditPage() {
   }, [project, settings, draft, projectId, createDraft, createRestaurantDraft])
 
   // Initialize blocks from draft content
+  // draft.content가 실제로 변경될 때만 blocks 초기화
+  const draftContent = draft?.content
   useEffect(() => {
-    if (draft) {
-      const initialBlocks = splitContentIntoBlocks(draft.content)
-      setBlocks(initialBlocks)
-      setOriginalContent(draft.content)
-    }
-  }, [draft?.projectId, draft?.version])
+    if (draftContent == null) return
+    const initialBlocks = splitContentIntoBlocks(draftContent)
+    setBlocks(initialBlocks)
+    setOriginalContent(draftContent)
+  }, [draftContent])
 
   // Handle block change
   const handleBlockChange = useCallback((blockId: string, newContent: string) => {
@@ -263,26 +276,9 @@ export default function DraftEditPage() {
     }
   }, [applyCorrectionToBlock, clearSelection, showNotification])
 
-  const handleApplyCorrection = useCallback((correctedText: string) => {
-    const success = applyCorrectionToBlock(correctedText)
-    if (success) {
-      clearSelection()
-    }
-  }, [applyCorrectionToBlock, clearSelection])
-
   const handleFloatingToolbarError = useCallback((message: string) => {
     showNotification('error', message)
   }, [showNotification])
-
-  // Version switch handling
-  const handleVersionSwitchRequest = useCallback((versionId: string, label?: string) => {
-    if (isDirty) {
-      setPendingVersionSwitch({ versionId, label })
-    } else {
-      const store = useProjectStore.getState()
-      store.switchDraftVersion(projectId, versionId)
-    }
-  }, [isDirty, projectId])
 
   const confirmVersionSwitch = useCallback(() => {
     if (pendingVersionSwitch) {
@@ -360,12 +356,29 @@ export default function DraftEditPage() {
         autoSaveStatus={autoSaveStatus}
         isDirty={isDirty}
         onSettingsClick={() => router.push(`/projects/${projectId}/draft/settings`)}
+        rightActions={
+          <button
+            onClick={() => setIsHelperCollapsed(!isHelperCollapsed)}
+            className="btn-ghost text-xs flex items-center gap-1"
+            title={isHelperCollapsed ? '도우미 열기' : '집중 모드'}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-base">
+              {isHelperCollapsed ? 'right_panel_open' : 'right_panel_close'}
+            </span>
+            <span>{isHelperCollapsed ? '도우미 열기' : '집중 모드'}</span>
+          </button>
+        }
       />
 
       {/* Main Content - 2 Column */}
       <div className="flex-1 overflow-hidden flex">
-        {/* Left - Editor */}
-        <main className="flex-1 overflow-y-auto custom-scrollbar min-w-0">
+        {/* Editor - helper 상태에 따라 폭 조정 */}
+        <main
+          className={`flex-1 overflow-y-auto custom-scrollbar min-w-0 transition-all duration-300 ${
+            isHelperCollapsed ? 'max-w-4xl mx-auto' : ''
+          }`}
+        >
           <div className="max-w-3xl mx-auto p-6">
             {/* Block Editor */}
             <div ref={editorRef} className="space-y-1">
@@ -382,46 +395,22 @@ export default function DraftEditPage() {
           </div>
         </main>
 
-        {/* Right - Helper Sidebar */}
-        <aside 
-          className="w-72 lg:w-80 overflow-y-auto custom-scrollbar border-l flex-shrink-0 hidden md:block"
-          style={{ 
-            backgroundColor: 'var(--workspace-secondary)',
-            borderColor: 'var(--border-primary)'
-          }}
-        >
-          {project.type === 'restaurant' ? (
-            <RestaurantDraftHelper 
-              projectId={projectId} 
-              onVersionSwitchRequest={handleVersionSwitchRequest}
-              isDirty={isDirty}
-            />
-          ) : project.type === 'threads' ? (
-            <div className="p-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-tertiary)' }}>
-                Threads 글쓰기 도우미
-              </h3>
-              <div className="space-y-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                <p>• 짧은 문장으로 작성하세요 (1-2문장)</p>
-                <p>• 이모지를 적절히 사용하세요</p>
-                <p>• 해시태그는 마지막에 별도로</p>
-              </div>
-            </div>
-          ) : project.type === 'karrot' ? (
-            <div className="p-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-tertiary)' }}>
-                당근 글쓰기 도우미
-              </h3>
-              <div className="space-y-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                <p>• 동네 친구처럼 친근하게</p>
-                <p>• 가격/위치 정보를 정확히</p>
-                <p>• 과장된 표현은 피하세요</p>
-              </div>
-            </div>
-          ) : (
-            <InformationalDraftHelper projectId={projectId} />
-          )}
-        </aside>
+        {/* Helper Sidebar - collapsible */}
+        {!isHelperCollapsed && (
+          <aside
+            className="w-72 lg:w-80 overflow-y-auto custom-scrollbar border-l flex-shrink-0 hidden md:block animate-in slide-in-from-right"
+            style={{
+              backgroundColor: 'var(--workspace-secondary)',
+              borderColor: 'var(--border-primary)',
+            }}
+          >
+            {project.type === 'restaurant' ? (
+              <RestaurantDraftHelper projectId={projectId} />
+            ) : (
+              <InformationalDraftHelper projectId={projectId} />
+            )}
+          </aside>
+        )}
       </div>
 
       {/* Notification Toast */}

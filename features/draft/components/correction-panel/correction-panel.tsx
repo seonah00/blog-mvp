@@ -12,24 +12,24 @@
  * - [ ] Humanize 설정 기능
  */
 
-"use client";
+'use client'
 
-import { useState } from "react";
+import { useState } from 'react'
 
 const tabs = [
-  { id: "typos", label: "오타", count: 12 },
-  { id: "spacing", label: "띄어쓰기", count: 8 },
-  { id: "forbidden", label: "금지어", count: 3 },
-  { id: "morphology", label: "형태소", count: 9 },
-  { id: "keywords", label: "반복키워드", count: 7 },
-  { id: "ai", label: "AI감지", count: null },
-];
+  { id: 'typos', label: '오타', count: 12 },
+  { id: 'spacing', label: '띄어쓰기', count: 8 },
+  { id: 'forbidden', label: '금지어', count: 3 },
+  { id: 'morphology', label: '형태소', count: 9 },
+  { id: 'keywords', label: '반복키워드', count: 7 },
+  { id: 'ai', label: 'AI감지', count: null },
+]
 
 export function CorrectionPanel() {
-  const [activeTab, setActiveTab] = useState("keywords");
+  const [activeTab, setActiveTab] = useState('keywords')
 
   return (
-    <aside className="w-[320px] h-screen bg-[var(--surface-container-lowest)] border-l border-[var(--outline-variant)] flex flex-col shadow-sm">
+    <aside className="w-80 h-full bg-[var(--surface-container-lowest)] border-l border-[var(--outline-variant)] flex flex-col shadow-sm">
       {/* TOP TAB BAR */}
       <nav className="flex overflow-x-auto no-scrollbar whitespace-nowrap px-2 py-3 bg-[var(--surface-container)]">
         {tabs.map((tab) => (
@@ -38,11 +38,11 @@ export function CorrectionPanel() {
             onClick={() => setActiveTab(tab.id)}
             className={`px-3 py-1 text-[13px] font-medium whitespace-nowrap ${
               activeTab === tab.id
-                ? "text-[var(--primary)] font-bold border-b-2 border-[var(--primary)]"
-                : "text-slate-500"
+                ? 'text-[var(--primary)] font-bold border-b-2 border-[var(--primary)]'
+                : 'text-slate-500'
             }`}
           >
-            {tab.label} {tab.count && tab.count}
+            {tab.label} {tab.count !== null && tab.count}
           </button>
         ))}
       </nav>
@@ -54,8 +54,8 @@ export function CorrectionPanel() {
 
       {/* CONTENT */}
       <div className="flex-1 overflow-y-auto px-4 space-y-6 pb-24">
-        {activeTab === "keywords" && <RepeatKeywordsTab />}
-        {activeTab === "ai" && <AIDetectionTab />}
+        {activeTab === 'keywords' && <RepeatKeywordsTab />}
+        {activeTab === 'ai' && <AIDetectionTab />}
       </div>
 
       {/* BOTTOM BUTTON */}
@@ -68,7 +68,7 @@ export function CorrectionPanel() {
         </p>
       </div>
     </aside>
-  );
+  )
 }
 
 function RepeatKeywordsTab() {
@@ -82,9 +82,9 @@ function RepeatKeywordsTab() {
         </h3>
         <div className="space-y-4">
           {[
-            { word: "인공지능", count: 23, percent: 80 },
-            { word: "자동화", count: 17, percent: 60 },
-            { word: "미래", count: 14, percent: 50 },
+            { word: '인공지능', count: 23, percent: 80 },
+            { word: '자동화', count: 17, percent: 60 },
+            { word: '미래', count: 14, percent: 50 },
           ].map((item) => (
             <div key={item.word} className="space-y-1">
               <div className="flex justify-between items-end">
@@ -92,7 +92,7 @@ function RepeatKeywordsTab() {
                 <span className="text-[11px] text-[var(--outline)]">{item.count}회 / {item.percent}%</span>
               </div>
               <div className="h-1.5 w-full bg-[var(--surface-container)] rounded-full overflow-hidden">
-                <div className="h-full bg-[var(--error)] rounded-full" style={{ width: `${item.percent}%` }}></div>
+                <div className="h-full bg-[var(--error)] rounded-full" style={{ width: `${item.percent}%` }} />
               </div>
               <button className="text-[11px] text-[var(--primary)] font-medium">줄이기 →</button>
             </div>
@@ -108,8 +108,8 @@ function RepeatKeywordsTab() {
         </h3>
         <div className="space-y-4">
           {[
-            { word: "직업", count: 9, percent: 30 },
-            { word: "기술", count: 7, percent: 20 },
+            { word: '직업', count: 9, percent: 30 },
+            { word: '기술', count: 7, percent: 20 },
           ].map((item) => (
             <div key={item.word} className="space-y-1">
               <div className="flex justify-between items-end">
@@ -117,7 +117,7 @@ function RepeatKeywordsTab() {
                 <span className="text-[11px] text-[var(--outline)]">{item.count}회 / {item.percent}%</span>
               </div>
               <div className="h-1.5 w-full bg-[var(--surface-container)] rounded-full overflow-hidden">
-                <div className="h-full bg-green-500 rounded-full" style={{ width: `${item.percent}%` }}></div>
+                <div className="h-full bg-green-500 rounded-full" style={{ width: `${item.percent}%` }} />
               </div>
             </div>
           ))}
@@ -132,12 +132,12 @@ function RepeatKeywordsTab() {
         <span className="text-base font-semibold text-green-600">기술</span>
       </div>
     </>
-  );
+  )
 }
 
 function AIDetectionTab() {
   return (
-    <div className="flex-1 overflow-y-auto px-4 space-y-6 pt-4 pb-24">
+    <div className="space-y-6 pt-4">
       {/* AI SCORE CARD */}
       <div className="p-5 bg-[var(--surface-container-low)] rounded-xl border border-[var(--outline-variant)]/20 space-y-4">
         <div className="flex flex-col items-center justify-center text-center">
@@ -145,9 +145,9 @@ function AIDetectionTab() {
           <span className="text-5xl font-extrabold text-[var(--error)]">72%</span>
         </div>
         <div className="relative pt-4 pb-2">
-          <div className="h-2 w-full rounded-full gauge-gradient"></div>
+          <div className="h-2 w-full rounded-full gauge-gradient" />
           <div className="absolute top-3 left-[72%] -translate-x-1/2 flex flex-col items-center">
-            <div className="w-1 h-4 bg-[var(--on-surface)] rounded-full border-2 border-white shadow-sm"></div>
+            <div className="w-1 h-4 bg-[var(--on-surface)] rounded-full border-2 border-white shadow-sm" />
           </div>
           <div className="flex justify-between mt-2 px-1">
             <span className="text-[10px] text-green-600 font-bold">안전</span>
@@ -160,16 +160,16 @@ function AIDetectionTab() {
       {/* DETECTOR BADGES */}
       <div className="grid grid-cols-1 gap-2">
         {[
-          { name: "GPTZero", status: "AI 감지", statusColor: "error" },
-          { name: "Turnitin", status: "AI 감지", statusColor: "error" },
-          { name: "Originality", status: "주의", statusColor: "yellow" },
+          { name: 'GPTZero', status: 'AI 감지', statusColor: 'error' },
+          { name: 'Turnitin', status: 'AI 감지', statusColor: 'error' },
+          { name: 'Originality', status: '주의', statusColor: 'yellow' },
         ].map((detector) => (
           <div key={detector.name} className="flex items-center justify-between p-2.5 bg-[var(--error-container)]/20 border border-[var(--error)]/10 rounded-lg">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full bg-${detector.statusColor === "error" ? "[var(--error)]" : "yellow-500"}`}></span>
+              <span className={`w-2 h-2 rounded-full ${detector.statusColor === 'error' ? 'bg-[var(--error)]' : 'bg-yellow-500'}`} />
               <span className="text-[13px] font-semibold">{detector.name}</span>
             </div>
-            <span className={`text-[11px] font-bold text-${detector.statusColor === "error" ? "[var(--error)]" : "yellow-700"}`}>
+            <span className={`text-[11px] font-bold ${detector.statusColor === 'error' ? 'text-[var(--error)]' : 'text-yellow-700'}`}>
               {detector.status}
             </span>
           </div>
@@ -181,20 +181,20 @@ function AIDetectionTab() {
         <h4 className="text-[12px] font-bold text-[var(--outline)] uppercase">Humanize Settings</h4>
         <div className="space-y-3">
           {[
-            { label: "문장 길이 다양화", checked: true },
-            { label: "구어체 표현 추가", checked: true },
-            { label: "AI 상투어 제거", checked: true },
-            { label: "개인 경험 문장 삽입", checked: false },
+            { label: '문장 길이 다양화', checked: true },
+            { label: '구어체 표현 추가', checked: true },
+            { label: 'AI 상투어 제거', checked: true },
+            { label: '개인 경험 문장 삽입', checked: false },
           ].map((setting) => (
             <div key={setting.label} className="flex items-center justify-between">
               <span className="text-[13px]">{setting.label}</span>
-              <div className={`w-8 h-4 rounded-full relative ${setting.checked ? "bg-[var(--primary)]" : "bg-[var(--surface-container-highest)]"}`}>
-                <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full ${setting.checked ? "right-0.5" : "left-0.5"}`}></div>
+              <div className={`w-8 h-4 rounded-full relative ${setting.checked ? 'bg-[var(--primary)]' : 'bg-[var(--surface-container-highest)]'}`}>
+                <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full ${setting.checked ? 'right-0.5' : 'left-0.5'}`} />
               </div>
             </div>
           ))}
         </div>
       </div>
     </div>
-  );
+  )
 }

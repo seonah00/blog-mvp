@@ -38,24 +38,20 @@ export function FloatingToolbar({
 }: FloatingToolbarProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [activeType, setActiveType] = useState<CorrectionType | null>(null)
-
-  if (!isVisible || !rect || !selectedText) {
-    return null
-  }
-
-  // 텍스트 길이 검증
-  const isTextValid = selectedText.trim().length >= 5
-
-  // 툴팁 위치 계산 (선택 영역 위, viewport 기준)
-  const top = rect.top + window.scrollY - 50
-  const left = rect.left + rect.width / 2
+  const normalizedSelectedText = selectedText?.trim() ?? ''
+  const isTextValid = normalizedSelectedText.length >= 5
 
   /**
    * 교정 액션 처리
    * CorrectionPanel과 동일한 파이프라인 사용
    */
   const handleCorrection = useCallback(async (type: CorrectionType) => {
-    // 텍스트 길이 검증
+    if (!normalizedSelectedText) {
+      onError?.('교정할 텍스트가 없습니다.')
+      onClose()
+      return
+    }
+
     if (!isTextValid) {
       onError?.('더 긴 텍스트를 선택해주세요. (최소 5자)')
       onClose()
@@ -67,7 +63,7 @@ export function FloatingToolbar({
 
     try {
       const response = await correctText({
-        originalText: selectedText,
+        originalText: normalizedSelectedText,
         correctionType: type,
         context: {
           targetAudience: projectContext.targetAudience,
@@ -87,13 +83,22 @@ export function FloatingToolbar({
       setActiveType(null)
       onClose()
     }
-  }, [isTextValid, selectedText, projectContext, onCorrectionResult, onError, onClose])
+  }, [isTextValid, normalizedSelectedText, projectContext, onCorrectionResult, onError, onClose])
 
-  const buttons: { type: CorrectionType; label: string; title: string }[] = [
+  const buttons = [
     { type: 'grammar', label: '문법', title: '문법 교정' },
     { type: 'style', label: '스타일', title: '스타일 개선' },
     { type: 'rewrite', label: '다시쓰기', title: '내용 재작성' },
-  ]
+  ] as const
+
+  // 모든 hook 호출 이후에 early return
+  if (!isVisible || !rect || !selectedText) {
+    return null
+  }
+
+  // 툴팁 위치 계산 (선택 영역 위, viewport 기준)
+  const top = rect.top + window.scrollY - 50
+  const left = rect.left + rect.width / 2
 
   return (
     <div

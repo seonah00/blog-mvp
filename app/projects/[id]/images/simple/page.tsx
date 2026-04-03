@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { useProjectStore } from '@/stores/project-store'
 import { splitContentIntoBlocks } from '../../draft/edit/components/BlockEditor'
 
@@ -17,7 +17,6 @@ import type { ImagePrompt, GeneratedImage } from '@/types'
 import type { ImageStyle, ImageRatio } from '@/lib/ai'
 
 export default function SimpleImageGenerationPage() {
-  const router = useRouter()
   const params = useParams<{ id: string }>()
   const projectId = params.id
 
@@ -45,25 +44,27 @@ export default function SimpleImageGenerationPage() {
     setIsMounted(true)
   }, [])
 
-  // Initialize from draft content
+  // Initialize from draft content and generate prompts if needed
+  // draft.content와 promptCount 변경 시에만 실행
+  const draftContent = draft?.content
+  const promptCount = imagePrompts.length
   useEffect(() => {
-    if (draft) {
-      const initialBlocks = splitContentIntoBlocks(draft.content)
-      setBlocks(initialBlocks)
+    if (draftContent == null) return
+    const initialBlocks = splitContentIntoBlocks(draftContent)
+    setBlocks(initialBlocks)
 
-      // Generate prompts if not exists
-      if (imagePrompts.length === 0 && initialBlocks.length > 0) {
-        generateImagePrompts(
-          projectId,
-          initialBlocks.map((b) => ({ id: b.id, content: b.content }))
-        )
-      }
-
-      // Generate simple prompt from all blocks
-      const simplePrompt = generateSimplePrompt(initialBlocks.map((b) => b.content))
-      setPrompt(simplePrompt)
+    // Generate prompts if not exists
+    if (promptCount === 0 && initialBlocks.length > 0) {
+      generateImagePrompts(
+        projectId,
+        initialBlocks.map((b) => ({ id: b.id, content: b.content }))
+      )
     }
-  }, [draft?.projectId])
+
+    // Generate simple prompt from all blocks
+    const simplePrompt = generateSimplePrompt(initialBlocks.map((b) => b.content))
+    setPrompt(simplePrompt)
+  }, [draftContent, promptCount, generateImagePrompts, projectId])
 
   // Get first prompt for selection tracking
   const firstPrompt = imagePrompts[0]

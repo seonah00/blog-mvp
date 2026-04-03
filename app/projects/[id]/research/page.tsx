@@ -1,5 +1,6 @@
 'use client'
 
+import { useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useProjectStore } from '@/stores/project-store'
 import { RestaurantResearchWorkspace } from '@/features/research/restaurant/workspace'
@@ -14,22 +15,35 @@ export default function ResearchPage() {
   const hasHydrated = useProjectStore((state) => state.hasHydrated)
   const project = useProjectStore((state) => state.getProject(projectId))
 
-  // Readiness data for header
-  const selectedPlace = useProjectStore((state) => 
-    project?.type === 'restaurant' ? state.getSelectedPlace(projectId) : null
+  // 배열/객체 자체가 아닌 primitive 값만 구독
+  const hasPlace = useProjectStore((state) => !!state.getSelectedPlace(projectId))
+  const reviewCount = useProjectStore((state) => state.getReviewInputs(projectId).length)
+  const hasDigest = useProjectStore((state) => !!state.getReviewDigest(projectId))
+
+  const sourceCount = useProjectStore((state) => state.getSources(projectId).length)
+  const hasOutline = useProjectStore((state) => !!state.getOutline(projectId))
+  const hasTopic = useProjectStore(
+    (state) => !!state.getProject(projectId)?.informationalMeta?.mainKeyword
   )
-  const reviews = useProjectStore((state) => 
-    project?.type === 'restaurant' ? state.getReviewInputs(projectId) : []
+
+  const restaurantReadiness = useMemo(
+    () => ({
+      hasPlace,
+      reviewCount,
+      hasDigest,
+      isComplete: hasPlace && reviewCount > 0 && hasDigest,
+    }),
+    [hasPlace, reviewCount, hasDigest]
   )
-  const digest = useProjectStore((state) => 
-    project?.type === 'restaurant' ? state.getReviewDigest(projectId) : undefined
-  )
-  
-  const sources = useProjectStore((state) => 
-    project?.type === 'informational' ? state.getSources(projectId) : []
-  )
-  const outline = useProjectStore((state) => 
-    project?.type === 'informational' ? state.getOutline(projectId) : undefined
+
+  const informationalReadiness = useMemo(
+    () => ({
+      hasTopic,
+      sourceCount,
+      hasOutline,
+      isComplete: hasTopic && sourceCount > 0 && hasOutline,
+    }),
+    [hasTopic, sourceCount, hasOutline]
   )
 
   if (!hasHydrated) {
@@ -48,8 +62,15 @@ export default function ResearchPage() {
       <div className="p-6">
         <div className="panel max-w-md mx-auto">
           <div className="panel-body text-center py-8">
-            <span className="material-symbols-outlined text-4xl mb-3" style={{ color: 'var(--text-muted)' }}>folder_off</span>
-            <h1 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>프로젝트를 찾을 수 없습니다</h1>
+            <span
+              className="material-symbols-outlined text-4xl mb-3"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              folder_off
+            </span>
+            <h1 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+              프로젝트를 찾을 수 없습니다
+            </h1>
             <p className="text-sm mb-4" style={{ color: 'var(--text-tertiary)' }}>
               먼저 프로젝트를 생성한 뒤 다시 접근해 주세요.
             </p>
@@ -65,39 +86,22 @@ export default function ResearchPage() {
     )
   }
 
-  // Calculate readiness
-  const restaurantReadiness = {
-    hasPlace: !!selectedPlace,
-    reviewCount: reviews.length,
-    hasDigest: !!digest,
-    isComplete: !!selectedPlace && reviews.length > 0 && !!digest,
-  }
-
-  const informationalReadiness = {
-    hasTopic: !!project.informationalMeta?.mainKeyword,
-    sourceCount: sources.length,
-    hasOutline: !!outline,
-    isComplete: !!project.informationalMeta?.mainKeyword && sources.length > 0 && !!outline,
-  }
-
   return (
     <div className="h-full flex flex-col" style={{ backgroundColor: 'var(--workspace)' }}>
-      {/* Header with Readiness Summary */}
       <ResearchHeader
         project={project}
         restaurantReadiness={project.type === 'restaurant' ? restaurantReadiness : null}
         informationalReadiness={project.type === 'informational' ? informationalReadiness : null}
       />
 
-      {/* Main Content */}
       <div className="flex-1 overflow-hidden">
         {project.type === 'restaurant' ? (
-          <RestaurantResearchWorkspace 
-            projectId={projectId} 
+          <RestaurantResearchWorkspace
+            projectId={projectId}
             readiness={restaurantReadiness}
           />
         ) : (
-          <InformationalResearchWorkspace 
+          <InformationalResearchWorkspace
             projectId={projectId}
             readiness={informationalReadiness}
           />

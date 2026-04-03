@@ -3,20 +3,14 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useProjectStore } from '@/stores/project-store'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Select } from '@/components/ui/select'
+
 import { Panel, PanelHeader, PanelBody } from '@/components/ui/panel'
-import { Notice, FieldLabel, EmptyState, HelperText, FieldError, InlineHint } from '@/components/ui'
+import { Notice, FieldLabel, HelperText, FieldError, InlineHint } from '@/components/ui'
 import type { 
   DraftSettings, 
-  ProjectTone, 
-  DraftLength,
   RestaurantDraftSettings,
   InformationalDraftSettings,
-  ReviewDigest,
-  NormalizedPlaceProfile 
+  ReviewDigest
 } from '@/types'
 
 const defaultSettings: DraftSettings = {
@@ -1042,7 +1036,7 @@ function ThreadsDraftSettingsForm({
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="none">없음</option>
-              <option value="question">질문형 ("여러분은 어떠세요?")</option>
+              <option value="question">질문형 (&quot;여러분은 어떠세요?&quot;)</option>
               <option value="follow">팔로우 유도</option>
               <option value="link">링크 클릭</option>
             </select>

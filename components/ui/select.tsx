@@ -37,7 +37,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
     id,
     ...props 
   }, ref) => {
-    const selectId = id || React.useId()
+    const generatedId = React.useId()
+    const selectId = id ?? generatedId
     
     const selectClasses = [
       'select',

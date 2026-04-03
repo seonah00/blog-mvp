@@ -302,9 +302,7 @@ ${domainRule}
 
   // 커스텀 프롬프트가 있으면 병합
   if (customPrompt) {
-    return `${customPrompt}\n\n${domainRule}\n\n**추가 기술적 제약:**\n- 제공되지 않은 정보는 추측하지 마세요.
-- 과장 표현을 피하고 사실에 기반하여 작성하세요.
-- 인용구는 원문을 정확히 인용하되, 맥락을 왜곡하지 마세요.`
+    return `${customPrompt}\n\n${domainRule}\n\n**추가 기술적 제약:**\n- 제공되지 않은 정보는 추측하지 마세요.\n- 과장 표현을 피하고 사실에 기반하여 작성하세요.\n- 인용구는 원문을 정확히 인용하되, 맥락을 왜곡하지 마세요.`
   }
 
   return basePrompt
@@ -457,47 +455,85 @@ function generateSmartTitle(
 function generateDeterministicDraft(
   input: GenerateInformationalDraftInput
 ): InformationalDraftOutput {
-  const { meta, outline, settings } = input
-  
+  const { meta, outline, settings, sources } = input
+
+  const safeSources = sources ?? []
+
   // 콘텐츠와 키워드를 바탕으로 제목 자동 생성
   const generatedTitle = generateSmartTitle(meta, outline.sections)
 
-  // 아웃라인 섹션 기반으로 간단한 draft 생성
-  const sections = outline.sections.map(section => ({
-    heading: section.heading,
-    content: section.keyPoints.map(point => `## ${point}
-
-${section.heading}와 관련하여 ${point}에 대해 알아보겠습니다. 이 부분에서는 제공된 소스 문서를 기반으로 상세한 설명을 드리겠습니다.
-
-- 핵심 내용 1: ${point}의 기본 개념
-- 핵심 내용 2: ${point}의 실제 적용
-- 핵심 내용 3: ${point}를 활용한 팁
-
-[참고: 이 초안은 기본 템플릿으로 생성되었습니다. AI 설정 후 더 풍부한 내용의 초안을 생성할 수 있습니다.]
-`).join('\n\n'),
+  // 소스에서 실제 인용구 추출 시도
+  const sourceQuotes = safeSources.slice(0, 3).map((s, i) => ({
+    text:
+      s.keyPoints?.[0] ||
+      s.summary?.slice(0, 100) ||
+      `${meta.mainKeyword}와 관련된 참고 내용입니다.`,
+    source: s.title || `출처 ${i + 1}`,
   }))
 
-  const content = sections.map(s => `# ${s.heading}\n\n${s.content}`).join('\n\n')
-  
+  // 자연스러운 문단 시작 패턴 다양화
+  const openers = [
+    (topic: string) => `${topic}에 대해 많은 분이 궁금해하시는데요, 실제 흐름에 맞춰 쉽게 풀어보겠습니다.`,
+    (topic: string) => `최근 ${topic}에 대한 관심이 높아지고 있습니다. 어떤 점을 먼저 이해하면 좋을까요?`,
+    (topic: string) => `${topic}를 처음 접하는 분들도 흐름을 따라올 수 있도록 핵심만 정리해보겠습니다.`,
+    (topic: string) => `이번에는 ${topic}를 실무적으로 어떻게 이해하면 좋은지 중심으로 살펴보겠습니다.`,
+  ]
+
+  // 아웃라인 섹션 기반으로 개선된 fallback draft 생성
+  const sections = outline.sections.map((section, idx) => {
+    const opener = openers[idx % openers.length](section.heading)
+    const sourceQuote =
+      sourceQuotes.length > 0 ? sourceQuotes[idx % sourceQuotes.length] : null
+
+    const paragraphBody = section.keyPoints
+      .map((point, pidx) => {
+        const transitions = ['먼저 ', '이어서 ', '또 하나 중요한 점은 ', '마지막으로 ']
+        const transition = transitions[pidx % transitions.length]
+
+        return `${transition}${point}에 주목할 필요가 있습니다.${
+          sourceQuote
+            ? ` 관련 자료를 보면 ${sourceQuote.source}에서도 비슷한 흐름이 언급됩니다.`
+            : ''
+        } 이 내용을 실제 글에 녹일 때는 독자가 바로 이해할 수 있는 예시와 함께 설명하는 것이 좋습니다.`
+      })
+      .join('\n\n')
+
+    const quotedBlock = sourceQuote
+      ? `\n\n> "${sourceQuote.text}" — ${sourceQuote.source}`
+      : ''
+
+    return {
+      heading: section.heading,
+      content: `${opener}\n\n${paragraphBody}${quotedBlock}\n\n이 부분은 실제 상황에 맞춰 예시를 덧붙이면 훨씬 자연스럽고 읽기 쉬운 문단이 됩니다.`,
+    }
+  })
+
+  const content = sections.map((s) => `# ${s.heading}\n\n${s.content}`).join('\n\n')
   const wordCount = content.length
+
+  // 실제 사용한 소스 ID (최대 3개)
+  const actuallyUsedSourceIds = safeSources.slice(0, 3).map((s) => s.sourceId)
 
   return {
     title: generatedTitle,
     content,
     sections,
-    faq: settings.includeFaq ? [
-      { question: `${meta.mainKeyword}란 무엇인가요?`, answer: '기본 개념에 대한 설명이 여기에 들어갑니다.' },
-      { question: '초보자도 시작할 수 있나요?', answer: '네, 단계별로 따라하실 수 있습니다.' },
-      { question: '더 알아보려면?', answer: '관련 소스 문서를 참고하세요.' },
-    ] : undefined,
+    faq: settings.includeFaq
+      ? outline.suggestedFaqs?.slice(0, 3) || [
+          {
+            question: `${meta.mainKeyword}의 핵심은?`,
+            answer: '위 내용을 참고하시면 됩니다.',
+          },
+        ]
+      : undefined,
     keywordsUsed: [meta.mainKeyword, ...meta.subKeywords],
     metadata: {
       wordCount,
       estimatedReadTime: Math.ceil(wordCount / 500),
       tone: settings.style,
     },
-    usedFallback: true,
-    usedSourceIds: input.sources.map(s => s.sourceId),
+    usedFallback: true, // metadata로만 표시, content에는 hardcoded 메시지 없음
+    usedSourceIds: actuallyUsedSourceIds,
   }
 }
 
@@ -612,7 +648,7 @@ export async function checkSectionCompletion(
     role: 'assistant',
     type: 'completion_check',
     content: missingPoints.length > 0
-      ? `다음 키포인트가 아직 다뤄지지 않았습니다: ${missingPoints.join(', ')}`
+      ? `다음 키포인트가 아직 다어지지 않았습니다: ${missingPoints.join(', ')}`
       : '모든 핵심 포인트가 잘 다뤄졌습니다.',
     missingPoints: missingPoints.length > 0 ? missingPoints : undefined,
   }
@@ -663,4 +699,62 @@ export async function generateSEOMeta(
     description: `${mainKeyword}에 대한 상세한 가이드입니다.`,
     keywords: [mainKeyword, '가이드', '튜토리얼'],
   }
+}
+
+/**
+ * 콘텐츠 개선 - AI를 사용하여 글을 개선합니다
+ */
+export async function improveInformationalContent(
+  content: string,
+  context: {
+    tone: string
+    targetAudience: string
+    style: string
+    instruction?: string
+  }
+): Promise<string> {
+  const systemPrompt = `당신은 전문 글쓰기 코치입니다. 제공된 글을 개선하여 더 자연스럽고 읽기 쉽게 만드세요.
+
+**개선 원칙:**
+1. 문장 길이를 다양하게 조정 (너무 긴 문장 나누기)
+2. 반복되는 표현 제거
+3. 전환사(그리고, 하지만, 따라서 등)를 자연스럽게 사용
+4. 독자가 공감할 수 있는 구체적인 표현 추가
+5. AI 느낌 나는 표현(상투어) 제거
+
+**금지 표현:**
+- "~입니다니다" 같은 중복 어미
+- "매우", "정말", "굉장히" 같은 과장된 부사 남용
+- "첫째, 둘째, 셋째" 같은 기계적인 나열
+- "결론적으로, 요약하자면" 같은 AI식 마무리
+
+**작성 톤:** ${context.tone}
+**타겟 독자:** ${context.targetAudience}`
+
+  const userPrompt = context.instruction 
+    ? `다음 글을 개선해주세요:\n\n${content}\n\n**특별 지시사항:** ${context.instruction}`
+    : `다음 글을 개선해주세요:\n\n${content}`
+
+  // AI 호출이 가능한 경우에만 AI 사용, 아니면 원문 반환
+  if (!isAIProviderAvailable()) {
+    return content
+  }
+
+  try {
+    const result = await generateWithPurpose('refine', {
+      systemPrompt,
+      userPrompt,
+      schema: z.object({ improvedContent: z.string() }),
+      temperature: 0.6,
+      maxTokens: 4000,
+    })
+
+    if (result.ok && result.data) {
+      return result.data.improvedContent || content
+    }
+  } catch (error) {
+    console.warn('[improveInformationalContent] Failed:', error)
+  }
+
+  return content
 }
